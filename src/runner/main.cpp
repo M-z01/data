@@ -1,6 +1,5 @@
 #include "loaders/image/ImageFactory.h"
 #include "utils/DataConverter.h"
-#include <opencv2/opencv.hpp>
 #include <filesystem>
 #include <iostream>
 #include <set>
@@ -68,9 +67,7 @@ int main(int argc, char* argv[]) {
 
             auto converted_img = DataConverter::convertImageFormat(img, targetFmt);
 
-            if (!cv::imwrite(dstPath.string(), converted_img->getImage())) {
-                throw std::runtime_error("cv::imwrite failed");
-            }
+            converted_img->saveToFile(dstPath.string());
 
             std::cout << "[OK]   " << srcPath.filename().string()
                       << "  ->  " << dstPath.filename().string() << "\n";

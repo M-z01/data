@@ -1,16 +1,17 @@
 #include "datatype/Image.h"
+#include "utils/OpenCVBridge.h"
 #include <stdexcept>
 
 void Image::load() {
     std::vector<unsigned char> bytes = source->getRawBytes();
-    img = cv::imdecode(bytes, cv::IMREAD_UNCHANGED);
-    if (img.empty()) {
+    cv::Mat mat = cv::imdecode(bytes, cv::IMREAD_UNCHANGED);
+    if (mat.empty()) {
         throw std::runtime_error("Failed to decode image from data source");
     }
 
     // check img type
-    int channels = img.channels();
-    int depth = img.depth();
+    int channels = mat.channels();
+    int depth = mat.depth();
 
     /*
         JPG: channels = 3, depth = CV_8U
@@ -26,5 +27,17 @@ void Image::load() {
         format = ImageFormat::EXR;
     } else {
         throw std::runtime_error("Unsupported image format: channels = " + std::to_string(channels) + ", depth = " + std::to_string(depth));
+    }
+
+    img = OpenCVBridge::matToBuffer(mat);
+}
+
+void Image::saveToFile(const std::string& path) const {
+    if (img.empty()) {
+        throw std::runtime_error("Cannot save: image not loaded");
+    }
+    cv::Mat mat = OpenCVBridge::bufferToMat(img);
+    if (!cv::imwrite(path, mat)) {
+        throw std::runtime_error("cv::imwrite failed for path: " + path);
     }
 }

@@ -13,6 +13,12 @@ public:
         const std::string& targetFormat
     );
 
+    static std::shared_ptr<Video> convertVideoFormat(
+        const std::shared_ptr<Video>& video,
+        const std::string& targetFormat,
+        double targetFps = -1.0
+    );
+
     static std::shared_ptr<Video> imagesToVideo(
         const std::vector<std::shared_ptr<Image>>& images,
         double fps

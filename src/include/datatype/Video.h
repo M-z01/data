@@ -1,6 +1,8 @@
 #pragma once
 #include "Data.h"
+#include "datatype/ImageBuffer.h"
 #include <string>
+#include <vector>
 
 enum class VideoFormat {
     MP4,
@@ -11,12 +13,16 @@ enum class VideoFormat {
 
 class Video : public Data {
 private:
-    std::vector<cv::Mat> frames;
+    std::vector<ImageBuffer> frames;
     VideoFormat format;
+    double fps;
 
 public:
-    Video(std::shared_ptr<DataSource> src) : Data(src), format(VideoFormat::UNKNOWN) {}
+    Video(std::shared_ptr<DataSource> src) : Data(src), format(VideoFormat::UNKNOWN), fps(0.0) {}
     void load() override;
-    const std::vector<cv::Mat>& getFrames() const { return frames; }
+    void saveToFile(const std::string& path) const;
+    const std::vector<ImageBuffer>& getFrames() const { return frames; }
     VideoFormat getFormat() const { return format; }
+    double getFps() const { return fps; }
+    void setFps(double newFps) { fps = newFps; }
 };

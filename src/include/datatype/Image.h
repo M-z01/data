@@ -1,5 +1,7 @@
 #pragma once
 #include "Data.h"
+#include "datatype/ImageBuffer.h"
+#include <string>
 
 enum class ImageFormat {
     JPG,
@@ -10,12 +12,13 @@ enum class ImageFormat {
 
 class Image : public Data {
 private:
-    cv::Mat img;
+    ImageBuffer img;
     ImageFormat format;
 
 public:
     Image(std::shared_ptr<DataSource> src) : Data(src), format(ImageFormat::UNKNOWN) {}
     void load() override;
-    cv::Mat getImage() const { return img; }
+    void saveToFile(const std::string& path) const;
+    const ImageBuffer& getImage() const { return img; }
     ImageFormat getFormat() const { return format; }
 };

@@ -1,7 +1,7 @@
 #pragma once
 #include <memory>
 #include <string>
-#include <opencv2/opencv.hpp>
+#include <vector>
 
 class DataSource {
     public:
