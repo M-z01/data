@@ -9,8 +9,9 @@ std::shared_ptr<Image> ImageFactory::createImage(ImageSourceType type, const std
             source = std::make_shared<FileDataSource>(pathOrUri);
             break;
         
-        case ImageSourceType::ROSBAG:
-            source = std::make_shared<ROS2BagDataSource>(pathOrUri);
+        case ImageSourceType::STREAM:
+            // TODO: Implement stream data source
+            throw std::runtime_error("Stream data source not implemented yet");
             break;
         
         default: throw std::invalid_argument("Unsupported image source type");

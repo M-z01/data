@@ -3,12 +3,10 @@
 #include <string>
 #include "datatype/Image.h"
 #include "datasource/FileDataSource.h"
-#include "datasource/ROS2BagDataSource.h"
-
 
 enum class ImageSourceType {
     FILE,
-    ROSBAG
+    STREAM
 };
 
 class ImageFactory {
