@@ -1,4 +1,4 @@
-#include "loaders/video/VideoFactory.h"
+#include "loaders/VideoFactory.h"
 #include <stdexcept>
 
 std::shared_ptr<Video> VideoFactory::createVideo(VideoSourceType type, const std::string& pathOrUri) {

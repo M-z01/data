@@ -1,4 +1,4 @@
-#include "loaders/image/ImageFactory.h"
+#include "loaders/ImageFactory.h"
 #include "utils/DataConverter.h"
 #include <filesystem>
 #include <iostream>

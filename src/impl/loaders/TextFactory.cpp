@@ -1,4 +1,4 @@
-#include "loaders/text/TextFactory.h"
+#include "loaders/TextFactory.h"
 #include <stdexcept>
 
 std::shared_ptr<Text> TextFactory::createText(TextSourceType type, const std::string& pathOrUri) {

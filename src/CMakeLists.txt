@@ -34,6 +34,9 @@ add_executable(main runner/main.cpp ${SOURCES})
 # Test executable
 add_executable(test runner/test.cpp ${SOURCES})
 
+# Image read test executable
+add_executable(imread_test runner/imread_test.cpp ${SOURCES})
+
 # Link libraries
 target_link_libraries(main
     ${OpenCV_LIBS}
@@ -44,3 +47,9 @@ target_link_libraries(test
     ${OpenCV_LIBS}
     ${FFMPEG_LIBRARIES}
 )
+
+target_link_libraries(imread_test
+    ${OpenCV_LIBS}
+    ${FFMPEG_LIBRARIES}
+)
+

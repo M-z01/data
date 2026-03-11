@@ -1,4 +1,4 @@
-#include "loaders/image/ImageFactory.h"
+#include "loaders/ImageFactory.h"
 #include <stdexcept>
 
 std::shared_ptr<Image> ImageFactory::createImage(ImageSourceType type, const std::string& pathOrUri) {

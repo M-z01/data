@@ -2,7 +2,7 @@
 #include <memory>
 #include <string>
 
-#include "loaders/video/VideoFactory.h"
+#include "loaders/VideoFactory.h"
 #include "utils/DataConverter.h"
 
 int main() {
