@@ -10,4 +10,5 @@ public:
     Data(std::shared_ptr<DataSource> src) : source(src) {}
     virtual ~Data() {}
     virtual void load() = 0;
+    virtual void saveToFile(const std::string& path) const = 0;
 };

@@ -7,24 +7,6 @@
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-static std::string formatToString(ImageFormat fmt) {
-    switch (fmt) {
-        case ImageFormat::JPG:  return "JPG";
-        case ImageFormat::PNG:  return "PNG";
-        case ImageFormat::EXR:  return "EXR";
-        default:                return "UNKNOWN";
-    }
-}
-
-static std::string pixelTypeToString(PixelType pt) {
-    switch (pt) {
-        case PixelType::UINT8:   return "UINT8";
-        case PixelType::UINT16:  return "UINT16";
-        case PixelType::FLOAT32: return "FLOAT32";
-    }
-    return "UNKNOWN";
-}
-
 // Returns a single-channel float Mat from any ImageBuffer.
 static cv::Mat toFloat1ch(const cv::Mat& src) {
     cv::Mat f;
@@ -48,19 +30,19 @@ static std::map<float, int> buildFloatToId(const cv::Mat& f1ch) {
 
 // ── public methods ────────────────────────────────────────────────────────────
 
-void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, const std::string& type) {
+void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType type) {
     const ImageBuffer& buf = img->getImage();
     std::cout << "=== Image Info ===\n";
-    std::cout << "  Format    : " << formatToString(img->getFormat()) << "\n";
+    std::cout << "  Format    : " << toString(img->getFormat()) << "\n";
     std::cout << "  Width     : " << buf.width     << " px\n";
     std::cout << "  Height    : " << buf.height    << " px\n";
     std::cout << "  Channels  : " << buf.channels  << "\n";
-    std::cout << "  Pixel type: " << pixelTypeToString(buf.pixelType) << "\n";
+    std::cout << "  Pixel type: " << toString(buf.pixelType) << "\n";
     std::cout << "  Byte size : " << buf.byteSize() << " bytes\n";
 
     cv::Mat mat = OpenCVBridge::bufferToMat(buf);
 
-    if (type == "mask") {
+    if (type == ImageViewType::MASK) {
         cv::Mat f = toFloat1ch(mat);
         auto float_to_id = buildFloatToId(f);
 
@@ -73,7 +55,7 @@ void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, const std::stri
             std::cout << "    ID " << uid << " (value=" << val
                       << "): " << counts[uid] << " pixels\n";
 
-    } else if (type == "depth") {
+    } else if (type == ImageViewType::DEPTH) {
         cv::Mat f = toFloat1ch(mat);
         double minVal, maxVal;
         cv::minMaxLoc(f, &minVal, &maxVal);
@@ -83,11 +65,11 @@ void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, const std::stri
     std::cout << "==================\n";
 }
 
-void DataInfo::displayImage(const std::shared_ptr<Image>& img, const std::string& type) {
+void DataInfo::displayImage(const std::shared_ptr<Image>& img, ImageViewType type) {
     const ImageBuffer& buf = img->getImage();
     cv::Mat mat = OpenCVBridge::bufferToMat(buf);
 
-    if (type == "mask") {
+    if (type == ImageViewType::MASK) {
         cv::Mat f = toFloat1ch(mat);
         auto float_to_id = buildFloatToId(f);
 
@@ -132,7 +114,7 @@ void DataInfo::displayImage(const std::shared_ptr<Image>& img, const std::string
         cv::imshow("Mask (pseudo-color)", color_mask);
         cv::waitKey(0);
 
-    } else if (type == "depth") {
+    } else if (type == ImageViewType::DEPTH) {
         cv::Mat f = toFloat1ch(mat);
         double minVal, maxVal;
         cv::minMaxLoc(f, &minVal, &maxVal);
@@ -160,11 +142,26 @@ void DataInfo::displayImage(const std::shared_ptr<Image>& img, const std::string
 }
 
 void DataInfo::printVideoInfo(const std::shared_ptr<Video>& video) {
-    // TODO
-    // print number of frames, dimensions, format, fps, etc.
+    const auto& frames = video->getFrames();
+    std::cout << "=== Video Info ===\n";
+    std::cout << "  Format    : " << toString(video->getFormat()) << "\n";
+    std::cout << "  FPS       : " << video->getFps() << "\n";
+    std::cout << "  Frames    : " << frames.size() << "\n";
+    if (!frames.empty()) {
+        const ImageBuffer& f = frames[0];
+        std::cout << "  Width     : " << f.width     << " px\n";
+        std::cout << "  Height    : " << f.height    << " px\n";
+        std::cout << "  Channels  : " << f.channels  << "\n";
+        std::cout << "  Pixel type: " << toString(f.pixelType) << "\n";
+    }
+    std::cout << "==================\n";
 }
 
 void DataInfo::printTextInfo(const std::shared_ptr<Text>& text) {
-    // TODO
-    // IDK yet what info is useful for text data
+    const std::string& content = text->getContent();
+    std::cout << "=== Text Info ===\n";
+    std::cout << "  Format    : " << toString(text->getFormat()) << "\n";
+    std::cout << "  Length    : " << content.size() << " bytes\n";
+    std::cout << "  Lines     : " << std::count(content.begin(), content.end(), '\n') + (content.empty() ? 0 : 1) << "\n";
+    std::cout << "=================\n";
 }

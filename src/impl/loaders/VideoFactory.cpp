@@ -1,5 +1,16 @@
 #include "loaders/VideoFactory.h"
 #include <stdexcept>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+static VideoFormat resolveVideoFormat(const std::string& path) {
+    std::string ext = fs::path(path).extension().string();
+    if (ext == ".mp4" || ext == ".mov" || ext == ".m4v") return VideoFormat::MP4;
+    if (ext == ".avi")                                    return VideoFormat::AVI;
+    if (ext == ".mkv" || ext == ".webm")                  return VideoFormat::MKV;
+    return VideoFormat::UNKNOWN;
+}
 
 std::shared_ptr<Video> VideoFactory::createVideo(VideoSourceType type, const std::string& pathOrUri) {
     std::shared_ptr<DataSource> source;
@@ -17,5 +28,9 @@ std::shared_ptr<Video> VideoFactory::createVideo(VideoSourceType type, const std
         default: throw std::invalid_argument("Unsupported video source type");
     }
 
-    return std::make_shared<Video>(source);
+    VideoFormat fmt = resolveVideoFormat(pathOrUri);
+    if (fmt == VideoFormat::UNKNOWN)
+        throw std::runtime_error("Unrecognised video extension: " + pathOrUri);
+
+    return std::make_shared<Video>(source, fmt);
 }

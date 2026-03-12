@@ -5,6 +5,7 @@
 #include "datatype/Image.h"
 #include "datatype/Text.h"
 #include "datatype/Video.h"
+#include "datatype/Pointcloud.h"
 
 class DataConverter {
 public:
@@ -21,11 +22,29 @@ public:
 
     static std::shared_ptr<Video> imagesToVideo(
         const std::vector<std::shared_ptr<Image>>& images,
-        double fps
+        double fps,
+        const std::string& targetFormat = "MP4"
     );
 
     static std::vector<std::shared_ptr<Image>> videoToImages(
         const std::shared_ptr<Video>& video
     );
 
+    static std::shared_ptr<Text> convertTextFormat(
+        const std::shared_ptr<Text>& text,
+        const std::string& targetFormat
+    );
+
+    static std::shared_ptr<Pointcloud> convertPointcloudFormat(
+        const std::shared_ptr<Pointcloud>& pc,
+        const std::string& targetFormat
+    );
+
+    // RGBD -> Pointcloud or Stereo -> Pointcloud conversion
+    static std::shared_ptr<Pointcloud> imagesToPointcloud(
+        const std::vector<std::shared_ptr<Image>>& rgbs,    // RGB images
+        const std::vector<std::shared_ptr<Image>>& depths,  // depth maps aligned with RGBs
+        const std::vector<std::shared_ptr<Image>>& segs     // masks for segmentation, optional
+    );
+    
 };

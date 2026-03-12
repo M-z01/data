@@ -56,17 +56,40 @@ struct FFmpegDeleter {
 
 } // namespace
 
-// Map a user-supplied format string (case-insensitive) to an OpenCV file extension.
-static std::string formatToExtension(const std::string& fmt) {
+static ImageFormat stringToImageFormat(const std::string& fmt) {
     std::string upper = fmt;
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+    if (upper == "JPG" || upper == "JPEG") return ImageFormat::JPG;
+    if (upper == "PNG")                    return ImageFormat::PNG;
+    if (upper == "EXR")                    return ImageFormat::EXR;
+    throw std::invalid_argument("Unsupported image format: " + fmt + ". Supported: JPG, PNG, EXR");
+}
 
-    if (upper == "JPG" || upper == "JPEG") return ".jpg";
-    if (upper == "PNG")                    return ".png";
-    if (upper == "EXR")                    return ".exr";
+static const char* imageFormatToExtension(ImageFormat fmt) {
+    switch (fmt) {
+        case ImageFormat::JPG: return ".jpg";
+        case ImageFormat::PNG: return ".png";
+        case ImageFormat::EXR: return ".exr";
+        default: throw std::runtime_error("Unknown ImageFormat");
+    }
+}
 
-    throw std::invalid_argument("Unsupported target format: " + fmt +
-                                ". Supported: JPG, JPEG, PNG, EXR");
+static VideoFormat stringToVideoFormat(const std::string& fmt) {
+    std::string upper = fmt;
+    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+    if (upper == "MP4") return VideoFormat::MP4;
+    if (upper == "AVI") return VideoFormat::AVI;
+    if (upper == "MKV") return VideoFormat::MKV;
+    throw std::invalid_argument("Unsupported video format: " + fmt + ". Supported: MP4, AVI, MKV");
+}
+
+static const char* videoFormatToFFmpegName(VideoFormat fmt) {
+    switch (fmt) {
+        case VideoFormat::MP4: return "mp4";
+        case VideoFormat::AVI: return "avi";
+        case VideoFormat::MKV: return "matroska";
+        default: throw std::runtime_error("Unknown VideoFormat");
+    }
 }
 
 std::shared_ptr<Image> DataConverter::convertImageFormat(
@@ -78,10 +101,30 @@ std::shared_ptr<Image> DataConverter::convertImageFormat(
         img->load();
     }
 
-    const std::string ext = formatToExtension(targetFormat);
+    const ImageFormat fmt = stringToImageFormat(targetFormat);
+    const char* ext = imageFormatToExtension(fmt);
 
     // Convert ImageBuffer → cv::Mat, encode into the requested format
     cv::Mat mat = OpenCVBridge::bufferToMat(img->getImage());
+
+    // Ensure mat depth is compatible with the target format before encoding
+    switch (fmt) {
+        case ImageFormat::JPG:
+            if (mat.depth() != CV_8U)
+                mat.convertTo(mat, CV_8U,
+                    mat.depth() == CV_16U ? 1.0 / 256.0 : 255.0);
+            break;
+        case ImageFormat::PNG:
+            if (mat.depth() == CV_32F)
+                mat.convertTo(mat, CV_16U, 65535.0);
+            break;
+        case ImageFormat::EXR:
+            if (mat.depth() != CV_32F)
+                mat.convertTo(mat, CV_32F,
+                    mat.depth() == CV_8U ? 1.0 / 255.0 : 1.0 / 65535.0);
+            break;
+        default: break;
+    }
     std::vector<unsigned char> buf;
     if (!cv::imencode(ext, mat, buf)) {
         throw std::runtime_error("cv::imencode failed for format: " + targetFormat);
@@ -89,8 +132,8 @@ std::shared_ptr<Image> DataConverter::convertImageFormat(
 
     // Wrap the encoded bytes in a MemoryDataSource and build a new Image
     auto memSrc   = std::make_shared<MemoryDataSource>(std::move(buf));
-    auto converted = std::make_shared<Image>(memSrc);
-    converted->load(); // decode & detect format
+    auto converted = std::make_shared<Image>(memSrc, fmt);
+    converted->load();
 
     return converted;
 }
@@ -105,16 +148,8 @@ std::shared_ptr<Video> DataConverter::convertVideoFormat(
         video->load();
     }
 
-    // Map format string (case-insensitive) to FFmpeg muxer name
-    std::string upper = targetFormat;
-    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-
-    const char* fmtName = nullptr;
-    if      (upper == "MP4") fmtName = "mp4";
-    else if (upper == "AVI") fmtName = "avi";
-    else if (upper == "MKV") fmtName = "matroska";
-    else throw std::invalid_argument("Unsupported target video format: " + targetFormat +
-                                     ". Supported: MP4, AVI, MKV");
+    const VideoFormat fmt = stringToVideoFormat(targetFormat);
+    const char* fmtName = videoFormatToFFmpegName(fmt);
 
     const auto& frames = video->getFrames();
     if (frames.empty())
@@ -283,22 +318,238 @@ std::shared_ptr<Video> DataConverter::convertVideoFormat(
 
     // Wrap encoded bytes in a MemoryDataSource and build a new Video
     auto memSrc   = std::make_shared<MemoryDataSource>(std::move(writeCtx.data));
-    auto converted = std::make_shared<Video>(memSrc);
-    converted->load(); // decode & detect format
+    auto converted = std::make_shared<Video>(memSrc, fmt);
+    converted->load();
     return converted;
 }
 
 std::shared_ptr<Video> DataConverter::imagesToVideo(
     const std::vector<std::shared_ptr<Image>>& images,
-    double fps
+    double fps,
+    const std::string& targetFormat
 ) {
-    // TODO: implement
-    throw std::runtime_error("imagesToVideo not yet implemented");
+    if (images.empty())
+        throw std::runtime_error("imagesToVideo: no images provided");
+
+    // Ensure all images are decoded
+    for (const auto& img : images)
+        if (img->getImage().empty())
+            img->load();
+
+    const VideoFormat fmt      = stringToVideoFormat(targetFormat);
+    const double      actualFps = fps > 0.0 ? fps : 30.0;
+    const char*       fmtName  = videoFormatToFFmpegName(fmt);
+
+    cv::Mat first = OpenCVBridge::bufferToMat(images[0]->getImage());
+    const int width  = first.cols;
+    const int height = first.rows;
+
+    // --- In-memory write context ---
+    WriteContext writeCtx;
+    const int avioBufferSize = 65536;
+    uint8_t* avioBuffer = reinterpret_cast<uint8_t*>(av_malloc(avioBufferSize));
+    if (!avioBuffer)
+        throw std::runtime_error("Failed to allocate AVIO buffer");
+
+    AVIOContext* avioCtxRaw = avio_alloc_context(
+        avioBuffer, avioBufferSize, 1, &writeCtx,
+        nullptr, writePacketCb, seekOutputCb);
+    if (!avioCtxRaw) {
+        av_free(avioBuffer);
+        throw std::runtime_error("Failed to allocate AVIOContext");
+    }
+
+    // --- Output format context ---
+    AVFormatContext* fmtCtxRaw = nullptr;
+    if (avformat_alloc_output_context2(&fmtCtxRaw, nullptr, fmtName, nullptr) < 0 || !fmtCtxRaw)
+        throw std::runtime_error("avformat_alloc_output_context2 failed");
+    fmtCtxRaw->pb    = avioCtxRaw;
+    fmtCtxRaw->flags |= AVFMT_FLAG_CUSTOM_IO;
+
+    // --- Encoder ---
+    const AVCodec* encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
+    if (!encoder) encoder = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+    if (!encoder) {
+        avformat_free_context(fmtCtxRaw);
+        throw std::runtime_error("No suitable video encoder found");
+    }
+
+    AVStream* stream = avformat_new_stream(fmtCtxRaw, nullptr);
+    if (!stream) {
+        avformat_free_context(fmtCtxRaw);
+        throw std::runtime_error("avformat_new_stream failed");
+    }
+    stream->id = 0;
+
+    std::unique_ptr<AVCodecContext, FFmpegDeleter<AVCodecContext, avcodec_free_context>>
+        codecCtx(avcodec_alloc_context3(encoder));
+    if (!codecCtx) {
+        avformat_free_context(fmtCtxRaw);
+        throw std::runtime_error("avcodec_alloc_context3 failed");
+    }
+    codecCtx->width     = width;
+    codecCtx->height    = height;
+    codecCtx->pix_fmt   = AV_PIX_FMT_YUV420P;
+    codecCtx->time_base = { 1, static_cast<int>(actualFps) };
+    codecCtx->framerate = { static_cast<int>(actualFps), 1 };
+    codecCtx->gop_size  = 12;
+    if (fmtCtxRaw->oformat->flags & AVFMT_GLOBALHEADER)
+        codecCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+
+    if (avcodec_open2(codecCtx.get(), encoder, nullptr) < 0) {
+        avformat_free_context(fmtCtxRaw);
+        throw std::runtime_error("avcodec_open2 failed");
+    }
+    avcodec_parameters_from_context(stream->codecpar, codecCtx.get());
+    stream->time_base = codecCtx->time_base;
+
+    if (avformat_write_header(fmtCtxRaw, nullptr) < 0) {
+        avformat_free_context(fmtCtxRaw);
+        throw std::runtime_error("avformat_write_header failed");
+    }
+
+    std::unique_ptr<AVFrame, FFmpegDeleter<AVFrame, av_frame_free>>
+        yuvFrame(av_frame_alloc());
+    if (!yuvFrame) {
+        av_write_trailer(fmtCtxRaw); avformat_free_context(fmtCtxRaw);
+        throw std::runtime_error("av_frame_alloc failed");
+    }
+    yuvFrame->format = AV_PIX_FMT_YUV420P;
+    yuvFrame->width  = width;
+    yuvFrame->height = height;
+    if (av_frame_get_buffer(yuvFrame.get(), 0) < 0) {
+        av_write_trailer(fmtCtxRaw); avformat_free_context(fmtCtxRaw);
+        throw std::runtime_error("av_frame_get_buffer failed");
+    }
+
+    SwsContext* swsCtx = sws_getContext(
+        width, height, AV_PIX_FMT_BGR24,
+        width, height, AV_PIX_FMT_YUV420P,
+        SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!swsCtx) {
+        av_write_trailer(fmtCtxRaw); avformat_free_context(fmtCtxRaw);
+        throw std::runtime_error("sws_getContext failed");
+    }
+
+    std::unique_ptr<AVPacket, FFmpegDeleter<AVPacket, av_packet_free>>
+        pkt(av_packet_alloc());
+    if (!pkt) {
+        sws_freeContext(swsCtx);
+        av_write_trailer(fmtCtxRaw); avformat_free_context(fmtCtxRaw);
+        throw std::runtime_error("av_packet_alloc failed");
+    }
+
+    auto drainEncoder = [&](AVFrame* f) {
+        if (avcodec_send_frame(codecCtx.get(), f) < 0)
+            throw std::runtime_error("avcodec_send_frame failed");
+        while (avcodec_receive_packet(codecCtx.get(), pkt.get()) == 0) {
+            av_packet_rescale_ts(pkt.get(), codecCtx->time_base, stream->time_base);
+            pkt->stream_index = stream->index;
+            av_interleaved_write_frame(fmtCtxRaw, pkt.get());
+            av_packet_unref(pkt.get());
+        }
+    };
+
+    int64_t pts = 0;
+    for (const auto& img : images) {
+        cv::Mat mat = OpenCVBridge::bufferToMat(img->getImage());
+        if (mat.channels() == 1)
+            cv::cvtColor(mat, mat, cv::COLOR_GRAY2BGR);
+        else if (mat.channels() == 4)
+            cv::cvtColor(mat, mat, cv::COLOR_BGRA2BGR);
+        if (mat.depth() != CV_8U)
+            mat.convertTo(mat, CV_8U,
+                mat.depth() == CV_16U ? 1.0 / 256.0 : 255.0);
+        if (!mat.isContinuous())
+            mat = mat.clone();
+
+        const uint8_t* srcData[4]   = { mat.data, nullptr, nullptr, nullptr };
+        int            srcStride[4] = { static_cast<int>(mat.step), 0, 0, 0 };
+
+        av_frame_make_writable(yuvFrame.get());
+        sws_scale(swsCtx, srcData, srcStride, 0, height,
+                  yuvFrame->data, yuvFrame->linesize);
+        yuvFrame->pts = pts++;
+        drainEncoder(yuvFrame.get());
+    }
+    drainEncoder(nullptr);
+
+    sws_freeContext(swsCtx);
+    av_write_trailer(fmtCtxRaw);
+    fmtCtxRaw->pb = nullptr;
+    av_freep(&avioCtxRaw->buffer);
+    avio_context_free(&avioCtxRaw);
+    avformat_free_context(fmtCtxRaw);
+
+    auto memSrc   = std::make_shared<MemoryDataSource>(std::move(writeCtx.data));
+    auto result   = std::make_shared<Video>(memSrc, fmt);
+    result->setFps(actualFps);
+    result->load();
+    return result;
 }
 
 std::vector<std::shared_ptr<Image>> DataConverter::videoToImages(
     const std::shared_ptr<Video>& video
 ) {
+    // Ensure frames are decoded
+    if (video->getFrames().empty())
+        video->load();
+
+    const auto& frames = video->getFrames();
+    std::vector<std::shared_ptr<Image>> images;
+    images.reserve(frames.size());
+
+    for (const auto& buf : frames) {
+        cv::Mat mat = OpenCVBridge::bufferToMat(buf);
+        std::vector<unsigned char> encoded;
+        if (!cv::imencode(".png", mat, encoded))
+            throw std::runtime_error("videoToImages: cv::imencode failed for a frame");
+
+        auto memSrc = std::make_shared<MemoryDataSource>(std::move(encoded));
+        auto img    = std::make_shared<Image>(memSrc, ImageFormat::PNG);
+        img->load();
+        images.push_back(std::move(img));
+    }
+
+    return images;
+}
+
+std::shared_ptr<Text> DataConverter::convertTextFormat(
+    const std::shared_ptr<Text>& text,
+    const std::string& targetFormat
+) {
+    if (text->getContent().empty())
+        text->load();
+
+    std::string upper = targetFormat;
+    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+    TextFormat fmt;
+    if      (upper == "TXT")  fmt = TextFormat::TXT;
+    else if (upper == "CSV")  fmt = TextFormat::CSV;
+    else if (upper == "JSON") fmt = TextFormat::JSON;
+    else throw std::invalid_argument("Unsupported text format: " + targetFormat + ". Supported: TXT, CSV, JSON");
+
+    const std::string& content = text->getContent();
+    std::vector<unsigned char> bytes(content.begin(), content.end());
+    auto memSrc   = std::make_shared<MemoryDataSource>(std::move(bytes));
+    auto converted = std::make_shared<Text>(memSrc, fmt);
+    converted->load();
+    return converted;
+}
+
+std::shared_ptr<Pointcloud> DataConverter::convertPointcloudFormat(
+    const std::shared_ptr<Pointcloud>& pc,
+    const std::string& targetFormat
+) {
     // TODO: implement
-    throw std::runtime_error("videoToImages not yet implemented");
+    throw std::runtime_error("convertPointcloudFormat not yet implemented");
+}
+
+std::shared_ptr<Pointcloud> DataConverter::imagesToPointcloud(
+    const std::vector<std::shared_ptr<Image>>& rgbs,
+    const std::vector<std::shared_ptr<Image>>& depths,
+    const std::vector<std::shared_ptr<Image>>& segs
+) {
+    // TODO: implement
+    throw std::runtime_error("imagesToPointcloud not yet implemented");
 }

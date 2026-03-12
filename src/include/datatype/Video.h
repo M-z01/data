@@ -11,6 +11,15 @@ enum class VideoFormat {
     UNKNOWN
 };
 
+inline std::string toString(VideoFormat fmt) {
+    switch (fmt) {
+        case VideoFormat::MP4: return "MP4";
+        case VideoFormat::AVI: return "AVI";
+        case VideoFormat::MKV: return "MKV";
+        default:               return "UNKNOWN";
+    }
+}
+
 class Video : public Data {
 private:
     std::vector<ImageBuffer> frames;
@@ -18,9 +27,10 @@ private:
     double fps;
 
 public:
-    Video(std::shared_ptr<DataSource> src) : Data(src), format(VideoFormat::UNKNOWN), fps(0.0) {}
+    Video(std::shared_ptr<DataSource> src, VideoFormat fmt = VideoFormat::UNKNOWN) : Data(src), format(fmt), fps(0.0) {}
     void load() override;
-    void saveToFile(const std::string& path) const;
+    void saveToFile(const std::string& path) const override;
+    void saveToFile(const std::string& path, VideoFormat fmt) const;
     const std::vector<ImageBuffer>& getFrames() const { return frames; }
     VideoFormat getFormat() const { return format; }
     double getFps() const { return fps; }

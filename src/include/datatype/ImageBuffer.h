@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <cstdint>
+#include <string>
 
 // Pixel element type (applies to every channel in the image)
 enum class PixelType {
@@ -8,6 +9,15 @@ enum class PixelType {
     UINT16,  // 2 bytes per channel (16-bit PNG)
     FLOAT32  // 4 bytes per channel (EXR)
 };
+
+inline std::string toString(PixelType pt) {
+    switch (pt) {
+        case PixelType::UINT8:   return "UINT8";
+        case PixelType::UINT16:  return "UINT16";
+        case PixelType::FLOAT32: return "FLOAT32";
+        default:                 return "UNKNOWN";
+    }
+}
 
 // A simple, OpenCV-free image buffer.
 // Data is stored row-major, interleaved channels (same memory layout as cv::Mat).

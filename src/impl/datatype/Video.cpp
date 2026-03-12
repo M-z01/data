@@ -56,6 +56,9 @@ struct FFmpegDeleter {
 // Video::load  — zero disk I/O
 // ---------------------------------------------------------------------------
 void Video::load() {
+    if (format == VideoFormat::UNKNOWN)
+        throw std::runtime_error("Video format not set before load()");
+
     std::vector<unsigned char> bytes = source->getRawBytes();
     if (bytes.empty())
         throw std::runtime_error("Empty data from source");
@@ -100,23 +103,6 @@ void Video::load() {
 
     if (avformat_find_stream_info(fmtCtxRaw, nullptr) < 0)
         throw std::runtime_error("avformat_find_stream_info failed");
-
-    // --- Detect container format ---
-    if (fmtCtxRaw->iformat && fmtCtxRaw->iformat->name) {
-        std::string name = fmtCtxRaw->iformat->name;
-        if (name.find("mp4") != std::string::npos ||
-            name.find("mov") != std::string::npos ||
-            name.find("m4v") != std::string::npos)
-            format = VideoFormat::MP4;
-        else if (name.find("avi") != std::string::npos)
-            format = VideoFormat::AVI;
-        else if (name.find("matroska") != std::string::npos ||
-                 name.find("mkv")      != std::string::npos ||
-                 name.find("webm")     != std::string::npos)
-            format = VideoFormat::MKV;
-        else
-            format = VideoFormat::UNKNOWN;
-    }
 
     // --- Locate first video stream ---
     int videoIdx = -1;
@@ -218,29 +204,32 @@ void Video::load() {
     // All unique_ptrs (codecCtx, fmtPtr, avioPtr, pkt, frame, bgrFrame)
     // are destroyed automatically in reverse declaration order.
 }
-void Video::saveToFile(const std::string& path) const {
-    if (frames.empty()) {
+void Video::saveToFile(const std::string& path, VideoFormat fmt) const {
+    if (frames.empty())
         throw std::runtime_error("Cannot save: video has no frames");
+
+    int fourcc;
+    switch (fmt) {
+        case VideoFormat::MP4: fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v'); break;
+        case VideoFormat::AVI: fourcc = cv::VideoWriter::fourcc('M', 'J', 'P', 'G'); break;
+        case VideoFormat::MKV: fourcc = cv::VideoWriter::fourcc('H', '2', '6', '4'); break;
+        default: throw std::runtime_error("Cannot save: video format is UNKNOWN");
     }
 
     cv::Mat firstFrame = OpenCVBridge::bufferToMat(frames[0]);
-    int fourcc = cv::VideoWriter::fourcc('H', '2', '6', '4');
-    if (path.find(".mp4") != std::string::npos) {
-        fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
-    } else if (path.find(".avi") != std::string::npos) {
-        fourcc = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
-    }
-
     double fpsToUse = (fps > 0.0) ? fps : 30.0;
     cv::VideoWriter writer(path, fourcc, fpsToUse, cv::Size(firstFrame.cols, firstFrame.rows));
 
-    if (!writer.isOpened()) {
+    if (!writer.isOpened())
         throw std::runtime_error("Failed to open VideoWriter for path: " + path);
-    }
 
     for (const auto& buffer : frames) {
         cv::Mat mat = OpenCVBridge::bufferToMat(buffer);
         writer.write(mat);
     }
+}
+
+void Video::saveToFile(const std::string& path) const {
+    saveToFile(path, format);
 }
 
