@@ -1,6 +1,7 @@
 #pragma once
 #include "Data.h"
 #include "datatype/ImageBuffer.h"
+#include <stdexcept>
 #include <string>
 
 enum class ImageFormat {
@@ -17,6 +18,13 @@ inline std::string toString(ImageFormat fmt) {
         case ImageFormat::EXR:  return "EXR";
         default:                return "UNKNOWN";
     }
+}
+
+inline ImageFormat imageFormatFromString(const std::string& s) {
+    if (s == "JPG" || s == "JPEG") return ImageFormat::JPG;
+    if (s == "PNG")                return ImageFormat::PNG;
+    if (s == "EXR")                return ImageFormat::EXR;
+    throw std::invalid_argument("Unknown image format: " + s);
 }
 
 class Image : public Data {

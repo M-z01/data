@@ -10,8 +10,8 @@ protected:
     bool loaded_ = false;
 
 public:
-    Data(std::shared_ptr<DataSource> src) : source(src) {}
-    virtual ~Data() {}
+    explicit Data(std::shared_ptr<DataSource> src) : source(std::move(src)) {}
+    virtual ~Data() = default;
     virtual void load() = 0;
     virtual void saveToFile(const std::string& path) const = 0;
 

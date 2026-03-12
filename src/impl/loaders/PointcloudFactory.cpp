@@ -9,9 +9,5 @@ std::shared_ptr<Pointcloud> PointcloudFactory::createPointcloud(PointcloudSource
     if (fmtStr.empty())
         throw std::runtime_error("Unrecognised pointcloud extension: " + pathOrUri);
 
-    PointcloudFormat fmt = PointcloudFormat::UNKNOWN;
-    if      (fmtStr == "PCD") fmt = PointcloudFormat::PCD;
-    else if (fmtStr == "PLY") fmt = PointcloudFormat::PLY;
-
-    return std::make_shared<Pointcloud>(source, fmt);
+    return std::make_shared<Pointcloud>(source, pointcloudFormatFromString(fmtStr));
 }

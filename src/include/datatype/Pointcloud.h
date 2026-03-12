@@ -1,5 +1,6 @@
 #pragma once
 #include "Data.h"
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,12 @@ inline std::string toString(PointcloudFormat fmt) {
         case PointcloudFormat::PLY: return "PLY";
         default:                    return "UNKNOWN";
     }
+}
+
+inline PointcloudFormat pointcloudFormatFromString(const std::string& s) {
+    if (s == "PCD") return PointcloudFormat::PCD;
+    if (s == "PLY") return PointcloudFormat::PLY;
+    throw std::invalid_argument("Unknown pointcloud format: " + s);
 }
 
 class Pointcloud : public Data {
@@ -37,7 +44,7 @@ public:
     // ── geometry ─────────────────────────────────────────────────────────────
     const std::vector<float>& getPoints() const { return points; }
     /// Directly set the parsed points (skips re-parsing when already available).
-    void setPoints(const std::vector<float>& pts) { points = pts; loaded_ = true; }
+    void setPoints(std::vector<float> pts) { points = std::move(pts); loaded_ = true; }
 
     // ── colour ────────────────────────────────────────────────────────────────
     bool hasColors() const { return !colors.empty(); }
@@ -45,8 +52,8 @@ public:
     /// Returns flat byte array: 3 bytes/point (r,g,b) or 4 bytes/point (r,g,b,a).
     const std::vector<uint8_t>& getColors() const { return colors; }
     /// Set per-point colour data.  @p alpha should be true when each point has 4 bytes.
-    void setColors(const std::vector<uint8_t>& c, bool alpha = false) {
-        colors = c; hasAlpha_ = alpha;
+    void setColors(std::vector<uint8_t> c, bool alpha = false) {
+        colors = std::move(c); hasAlpha_ = alpha;
     }
 
     PointcloudFormat getFormat() const { return format; }

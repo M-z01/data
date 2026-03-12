@@ -17,8 +17,7 @@ void Image::load() {
 }
 
 void Image::saveToFile(const std::string& path, ImageFormat fmt, PixelType pixelType) const {
-    if (img.empty())
-        throw std::runtime_error("Cannot save: image not loaded");
+    requireLoaded("Image");
 
     cv::Mat mat = OpenCVBridge::bufferToMat(img);
 

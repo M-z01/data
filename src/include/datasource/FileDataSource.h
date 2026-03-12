@@ -8,7 +8,7 @@ class FileDataSource : public DataSource {
         mutable bool cacheLoaded_ = false;
 
     public:
-        FileDataSource(const std::string& path) : filePath(path) {}
+        explicit FileDataSource(const std::string& path) : filePath(path) {}
         // Reads the file on first call; subsequent calls return the cached buffer.
         const std::vector<unsigned char>& getRawBytes() override;
         std::string getPath() const { return filePath; }

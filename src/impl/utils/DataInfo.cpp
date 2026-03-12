@@ -3,8 +3,6 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
 
-using namespace OpenCVBridge;
-
 //Image
 void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType type) {
     const ImageBuffer& buf = img->getImage();
@@ -19,8 +17,8 @@ void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType t
     cv::Mat mat = OpenCVBridge::bufferToMat(buf);
 
     if (type == ImageViewType::MASK) {
-        cv::Mat f = toFloat1ch(mat);
-        auto float_to_id = buildFloatToId(f);
+        cv::Mat f = OpenCVBridge::toFloat1ch(mat);
+        auto float_to_id = OpenCVBridge::buildFloatToId(f);
 
         // Count pixels per ID
         std::map<int, int> counts;
@@ -32,7 +30,7 @@ void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType t
                       << "): " << counts[uid] << " pixels\n";
 
     } else if (type == ImageViewType::DEPTH) {
-        cv::Mat f = toFloat1ch(mat);
+        cv::Mat f = OpenCVBridge::toFloat1ch(mat);
         double minVal, maxVal;
         cv::minMaxLoc(f, &minVal, &maxVal);
         std::cout << "  Min depth : " << minVal << "\n";

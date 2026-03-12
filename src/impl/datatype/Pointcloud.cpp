@@ -122,6 +122,12 @@ static PointcloudData parsePCD(const std::vector<unsigned char>& bytes) {
     if (colorPacked || colorSep)
         result.colors.reserve(numPoints * colorCh);
 
+    const int maxGeomIdx = std::max({xi, yi, zi});
+    const int packedCI   = (rgbaI >= 0) ? rgbaI : rgbI;
+    const int maxColorIdx = colorSep
+        ? (hasAlpha ? std::max({ri,gi,bi,ai}) : std::max({ri,gi,bi}))
+        : 0;
+
     if (dataType == "ascii") {
         for (int n = 0; n < numPoints && pos < size; ++n) {
             std::string line = readLine();
@@ -130,19 +136,17 @@ static PointcloudData parsePCD(const std::vector<unsigned char>& bytes) {
             std::vector<float> vals;
             float v;
             while (iss >> v) vals.push_back(v);
-            int maxGeomIdx = std::max({xi, yi, zi});
             if ((int)vals.size() <= maxGeomIdx) continue;
             result.points.push_back(vals[xi]);
             result.points.push_back(vals[yi]);
             result.points.push_back(vals[zi]);
             if (colorPacked) {
-                int ci = (rgbaI >= 0) ? rgbaI : rgbI;
-                if (ci < (int)vals.size()) {
+                if (packedCI < (int)vals.size()) {
                     // ASCII PCD writes the packed color as a plain decimal integer.
                     // Reading it via `float` preserves the value exactly for 24-bit
                     // colors (integers <= 2^24 are exactly representable), so we
                     // recover the original uint32 with static_cast — NOT memcpy.
-                    uint32_t packed_int = static_cast<uint32_t>(static_cast<long long>(vals[ci]));
+                    uint32_t packed_int = static_cast<uint32_t>(static_cast<long long>(vals[packedCI]));
                     uint8_t r = (packed_int >> 16) & 0xFF;
                     uint8_t g = (packed_int >>  8) & 0xFF;
                     uint8_t b = (packed_int >>  0) & 0xFF;
@@ -153,8 +157,7 @@ static PointcloudData parsePCD(const std::vector<unsigned char>& bytes) {
                     if (hasAlpha) result.colors.push_back(a);
                 }
             } else if (colorSep) {
-                int maxCI = hasAlpha ? std::max({ri,gi,bi,ai}) : std::max({ri,gi,bi});
-                if ((int)vals.size() > maxCI) {
+                if ((int)vals.size() > maxColorIdx) {
                     result.colors.push_back(static_cast<uint8_t>(vals[ri]));
                     result.colors.push_back(static_cast<uint8_t>(vals[gi]));
                     result.colors.push_back(static_cast<uint8_t>(vals[bi]));
@@ -182,9 +185,8 @@ static PointcloudData parsePCD(const std::vector<unsigned char>& bytes) {
             result.points.push_back(y);
             result.points.push_back(z);
             if (colorPacked) {
-                int ci = (rgbaI >= 0) ? rgbaI : rgbI;
                 float packed;
-                std::memcpy(&packed, pt + offsets[ci], sizeof(float));
+                std::memcpy(&packed, pt + offsets[packedCI], sizeof(float));
                 uint8_t r, g, b, a;
                 unpackPCDRGBA(packed, r, g, b, a);
                 result.colors.push_back(r);
@@ -283,6 +285,11 @@ static PointcloudData parsePLY(const std::vector<unsigned char>& bytes) {
     result.points.reserve(numVertices * 3);
     if (hasColor) result.colors.reserve(numVertices * colorCh);
 
+    const int maxGeomIdx  = std::max({xi, yi, zi});
+    const int maxColorIdx = hasColor
+        ? (hasAlpha ? std::max({ri,gi,bi,ai}) : std::max({ri,gi,bi}))
+        : 0;
+
     if (plyFormat == "ascii") {
         for (int n = 0; n < numVertices && pos < size; ++n) {
             std::string line = readLine();
@@ -290,14 +297,12 @@ static PointcloudData parsePLY(const std::vector<unsigned char>& bytes) {
             std::vector<float> vals;
             float v;
             while (iss >> v) vals.push_back(v);
-            int maxGeomIdx = std::max({xi, yi, zi});
             if ((int)vals.size() <= maxGeomIdx) continue;
             result.points.push_back(vals[xi]);
             result.points.push_back(vals[yi]);
             result.points.push_back(vals[zi]);
             if (hasColor) {
-                int maxCI = hasAlpha ? std::max({ri,gi,bi,ai}) : std::max({ri,gi,bi});
-                if ((int)vals.size() > maxCI) {
+                if ((int)vals.size() > maxColorIdx) {
                     result.colors.push_back(static_cast<uint8_t>(vals[ri]));
                     result.colors.push_back(static_cast<uint8_t>(vals[gi]));
                     result.colors.push_back(static_cast<uint8_t>(vals[bi]));

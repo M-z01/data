@@ -5,7 +5,7 @@
 
 class DataSource {
     public:
-        virtual ~DataSource() {}
+        virtual ~DataSource() = default;
         // Returns a reference to the raw byte buffer — zero-copy for cached sources.
         virtual const std::vector<unsigned char>& getRawBytes() = 0;
 

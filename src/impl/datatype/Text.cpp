@@ -16,8 +16,7 @@ void Text::load() {
 }
 
 void Text::saveToFile(const std::string& path, TextFormat fmt) const {
-    if (content.empty())
-        throw std::runtime_error("Cannot save: text content not loaded");
+    requireLoaded("Text");
     std::ofstream out(path);
     if (!out)
         throw std::runtime_error("Failed to open file for writing: " + path);

@@ -1,5 +1,6 @@
 #include "datatype/Video.h"
 #include "utils/OpenCVBridge.h"
+#include "utils/FFmpegDeleter.h"
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
@@ -12,14 +13,6 @@ extern "C" {
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
 }
-
-// ---------------------------------------------------------------------------
-// RAII helper — wraps any FFmpeg free function of the form void f(T**)
-// ---------------------------------------------------------------------------
-template<typename T, void (*Fn)(T**)>
-struct FFmpegDeleter {
-    void operator()(T* p) const { if (p) Fn(&p); }
-};
 
 // ---------------------------------------------------------------------------
 // Custom AVIO callbacks (used only for memory-backed sources)
@@ -127,12 +120,13 @@ static void closeSource(SourceHandle& h) {
 // for each decoded BGR8 frame. The cv::Mat is a view into an internal
 // temporary buffer — it is only valid for the duration of the callback.
 // onFrame must copy pixel data if it needs to keep it.
+// Return false from onFrame to stop decoding early.
 // outFps is set to the detected frame rate.
 // ---------------------------------------------------------------------------
 static void runDecodeLoop(
     AVFormatContext* fmtCtx,
     double& outFps,
-    std::function<void(cv::Mat&)> onFrame)
+    std::function<bool(cv::Mat&)> onFrame)
 {
     if (avformat_find_stream_info(fmtCtx, nullptr) < 0)
         throw std::runtime_error("avformat_find_stream_info failed");
@@ -174,7 +168,7 @@ static void runDecodeLoop(
 
     SwsContext* swsCtx = nullptr;
 
-    auto processFrame = [&](AVFrame* f) {
+    auto processFrame = [&](AVFrame* f) -> bool {
         // Re-initialise swscale on first call or resolution change
         if (!swsCtx || bgrFrame->width != f->width || bgrFrame->height != f->height) {
             if (swsCtx)            sws_freeContext(swsCtx);
@@ -200,21 +194,24 @@ static void runDecodeLoop(
         // Wrap bgrFrame in a cv::Mat view (no copy) and hand to caller
         cv::Mat mat(f->height, f->width, CV_8UC3,
                     bgrFrame->data[0], bgrFrame->linesize[0]);
-        onFrame(mat);
+        return onFrame(mat);
     };
 
-    while (av_read_frame(fmtCtx, pkt.get()) >= 0) {
+    bool stopped = false;
+    while (!stopped && av_read_frame(fmtCtx, pkt.get()) >= 0) {
         if (pkt->stream_index == videoIdx) {
             if (avcodec_send_packet(codecCtx.get(), pkt.get()) == 0)
-                while (avcodec_receive_frame(codecCtx.get(), frame.get()) == 0)
-                    processFrame(frame.get());
+                while (!stopped && avcodec_receive_frame(codecCtx.get(), frame.get()) == 0)
+                    if (!processFrame(frame.get())) stopped = true;
         }
         av_packet_unref(pkt.get());
     }
-    // Flush decoder
-    avcodec_send_packet(codecCtx.get(), nullptr);
-    while (avcodec_receive_frame(codecCtx.get(), frame.get()) == 0)
-        processFrame(frame.get());
+    // Flush decoder (unless already stopped)
+    if (!stopped) {
+        avcodec_send_packet(codecCtx.get(), nullptr);
+        while (avcodec_receive_frame(codecCtx.get(), frame.get()) == 0)
+            if (!processFrame(frame.get())) break;
+    }
 
     if (swsCtx)            sws_freeContext(swsCtx);
     if (bgrFrame->data[0]) av_freep(&bgrFrame->data[0]);
@@ -229,8 +226,9 @@ void Video::load() {
 
     SourceHandle h = openSource(source.get());
     try {
-        runDecodeLoop(h.fmtCtx, fps, [this](cv::Mat& mat) {
+        runDecodeLoop(h.fmtCtx, fps, [this](cv::Mat& mat) -> bool {
             frames.push_back(OpenCVBridge::matToBuffer(mat));
+            return true;
         });
     } catch (...) {
         closeSource(h);
@@ -256,22 +254,13 @@ void Video::load() {
 // ---------------------------------------------------------------------------
 void Video::scanMetadata() {
     SourceHandle h = openSource(source.get());
-    bool gotOne = false;
     try {
-        runDecodeLoop(h.fmtCtx, fps, [this, &gotOne](cv::Mat& mat) {
-            if (!gotOne) {
-                metaWidth    = mat.cols;
-                metaHeight   = mat.rows;
-                metaChannels = mat.channels();
-                gotOne       = true;
-            }
-            // Don't store the frame — throw a sentinel to exit early
-            throw std::runtime_error("__scanMetadata_done__");
+        runDecodeLoop(h.fmtCtx, fps, [this](cv::Mat& mat) -> bool {
+            metaWidth    = mat.cols;
+            metaHeight   = mat.rows;
+            metaChannels = mat.channels();
+            return false; // stop after first frame
         });
-    } catch (const std::runtime_error& e) {
-        closeSource(h);
-        if (std::string(e.what()) != "__scanMetadata_done__") throw;
-        return;
     } catch (...) {
         closeSource(h);
         throw;
@@ -290,9 +279,10 @@ void Video::forEachFrame(FrameCallback cb) const {
     double detectedFps = fps; // ignored output; fps already set after load()
     std::size_t idx = 0;
     try {
-        runDecodeLoop(h.fmtCtx, detectedFps, [&](cv::Mat& mat) {
+        runDecodeLoop(h.fmtCtx, detectedFps, [&](cv::Mat& mat) -> bool {
             ImageBuffer buf = OpenCVBridge::matToBuffer(mat);
             cb(idx++, buf);
+            return true;
         });
     } catch (...) {
         closeSource(h);
@@ -301,6 +291,7 @@ void Video::forEachFrame(FrameCallback cb) const {
     closeSource(h);
 }
 void Video::saveToFile(const std::string& path, VideoFormat fmt) const {
+    requireLoaded("Video");
     if (frames.empty())
         throw std::runtime_error("Cannot save: video has no frames");
 

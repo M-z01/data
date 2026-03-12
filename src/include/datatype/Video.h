@@ -1,6 +1,7 @@
 #pragma once
 #include "Data.h"
 #include "datatype/ImageBuffer.h"
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <functional>
@@ -19,6 +20,13 @@ inline std::string toString(VideoFormat fmt) {
         case VideoFormat::MKV: return "MKV";
         default:               return "UNKNOWN";
     }
+}
+
+inline VideoFormat videoFormatFromString(const std::string& s) {
+    if (s == "MP4") return VideoFormat::MP4;
+    if (s == "AVI") return VideoFormat::AVI;
+    if (s == "MKV") return VideoFormat::MKV;
+    throw std::invalid_argument("Unknown video format: " + s);
 }
 
 class Video : public Data {

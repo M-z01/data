@@ -1,6 +1,7 @@
 #include "utils/DataConverter.h"
 #include "datasource/MemoryDataSource.h"
 #include "utils/OpenCVBridge.h"
+#include "utils/FFmpegDeleter.h"
 #include <opencv2/opencv.hpp>
 #include <stdexcept>
 #include <algorithm>
@@ -49,21 +50,14 @@ static int64_t seekOutputCb(void* opaque, int64_t offset, int whence) {
     return ctx->pos;
 }
 
-// RAII wrapper matching the pattern in Video.cpp
-template<typename T, void (*Fn)(T**)>
-struct FFmpegDeleter {
-    void operator()(T* p) const { if (p) Fn(&p); }
-};
+// RAII wrapper — uses the shared FFmpegDeleter from utils/FFmpegDeleter.h
 
 } // namespace
 
-static ImageFormat stringToImageFormat(const std::string& fmt) {
-    std::string upper = fmt;
+static std::string toUpper(const std::string& s) {
+    std::string upper = s;
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-    if (upper == "JPG" || upper == "JPEG") return ImageFormat::JPG;
-    if (upper == "PNG")                    return ImageFormat::PNG;
-    if (upper == "EXR")                    return ImageFormat::EXR;
-    throw std::invalid_argument("Unsupported image format: " + fmt + ". Supported: JPG, PNG, EXR");
+    return upper;
 }
 
 static const char* imageFormatToExtension(ImageFormat fmt) {
@@ -73,15 +67,6 @@ static const char* imageFormatToExtension(ImageFormat fmt) {
         case ImageFormat::EXR: return ".exr";
         default: throw std::runtime_error("Unknown ImageFormat");
     }
-}
-
-static VideoFormat stringToVideoFormat(const std::string& fmt) {
-    std::string upper = fmt;
-    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-    if (upper == "MP4") return VideoFormat::MP4;
-    if (upper == "AVI") return VideoFormat::AVI;
-    if (upper == "MKV") return VideoFormat::MKV;
-    throw std::invalid_argument("Unsupported video format: " + fmt + ". Supported: MP4, AVI, MKV");
 }
 
 static const char* videoFormatToFFmpegName(VideoFormat fmt) {
@@ -102,7 +87,7 @@ std::shared_ptr<Image> DataConverter::convertImageFormat(
         img->load();
     }
 
-    const ImageFormat fmt = stringToImageFormat(targetFormat);
+    const ImageFormat fmt = imageFormatFromString(toUpper(targetFormat));
     const char* ext = imageFormatToExtension(fmt);
 
     // Convert ImageBuffer → cv::Mat, encode into the requested format
@@ -151,7 +136,7 @@ std::shared_ptr<Video> DataConverter::convertVideoFormat(
         video->load();
     }
 
-    const VideoFormat fmt = stringToVideoFormat(targetFormat);
+    const VideoFormat fmt = videoFormatFromString(toUpper(targetFormat));
     const char* fmtName = videoFormatToFFmpegName(fmt);
 
     const auto& frames = video->getFrames();
@@ -339,7 +324,7 @@ std::shared_ptr<Video> DataConverter::imagesToVideo(
         if (img->getImage().empty())
             img->load();
 
-    const VideoFormat fmt      = stringToVideoFormat(targetFormat);
+    const VideoFormat fmt      = videoFormatFromString(toUpper(targetFormat));
     const double      actualFps = fps > 0.0 ? fps : 30.0;
     const char*       fmtName  = videoFormatToFFmpegName(fmt);
 
@@ -604,13 +589,7 @@ std::shared_ptr<Text> DataConverter::convertTextFormat(
     if (text->getContent().empty())
         text->load();
 
-    std::string upper = targetFormat;
-    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-    TextFormat fmt;
-    if      (upper == "TXT")  fmt = TextFormat::TXT;
-    else if (upper == "CSV")  fmt = TextFormat::CSV;
-    else if (upper == "JSON") fmt = TextFormat::JSON;
-    else throw std::invalid_argument("Unsupported text format: " + targetFormat + ". Supported: TXT, CSV, JSON");
+    const TextFormat fmt = textFormatFromString(toUpper(targetFormat));
 
     const std::string& content = text->getContent();
     std::vector<unsigned char> bytes(content.begin(), content.end());
@@ -627,12 +606,7 @@ std::shared_ptr<Pointcloud> DataConverter::convertPointcloudFormat(
     if (!pc->isLoaded())
         throw std::runtime_error("convertPointcloudFormat: call load() on the source first");
 
-    std::string upper = targetFormat;
-    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-    PointcloudFormat fmt;
-    if      (upper == "PCD") fmt = PointcloudFormat::PCD;
-    else if (upper == "PLY") fmt = PointcloudFormat::PLY;
-    else throw std::invalid_argument("Unsupported pointcloud format: " + targetFormat + ". Supported: PCD, PLY");
+    const PointcloudFormat fmt = pointcloudFormatFromString(toUpper(targetFormat));
 
     // Copy geometry and colour in-memory — no re-parsing needed.
     const std::vector<float>& pts = pc->getPoints();
