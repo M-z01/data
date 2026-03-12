@@ -30,6 +30,7 @@ static std::map<float, int> buildFloatToId(const cv::Mat& f1ch) {
 
 // ── public methods ────────────────────────────────────────────────────────────
 
+//Image
 void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType type) {
     const ImageBuffer& buf = img->getImage();
     std::cout << "=== Image Info ===\n";
@@ -141,22 +142,33 @@ void DataInfo::displayImage(const std::shared_ptr<Image>& img, ImageViewType typ
     }
 }
 
+//Video
 void DataInfo::printVideoInfo(const std::shared_ptr<Video>& video) {
     const auto& frames = video->getFrames();
     std::cout << "=== Video Info ===\n";
     std::cout << "  Format    : " << toString(video->getFormat()) << "\n";
     std::cout << "  FPS       : " << video->getFps() << "\n";
-    std::cout << "  Frames    : " << frames.size() << "\n";
     if (!frames.empty()) {
+        // Full info available after load()
         const ImageBuffer& f = frames[0];
+        std::cout << "  Frames    : " << frames.size() << "\n";
         std::cout << "  Width     : " << f.width     << " px\n";
         std::cout << "  Height    : " << f.height    << " px\n";
         std::cout << "  Channels  : " << f.channels  << "\n";
         std::cout << "  Pixel type: " << toString(f.pixelType) << "\n";
+    } else {
+        // Lightweight metadata available after scanMetadata()
+        std::cout << "  Frames    : (streaming \u2014 count unknown)\n";
+        if (video->getWidth() > 0) {
+            std::cout << "  Width     : " << video->getWidth()    << " px\n";
+            std::cout << "  Height    : " << video->getHeight()   << " px\n";
+            std::cout << "  Channels  : " << video->getChannels() << "\n";
+        }
     }
     std::cout << "==================\n";
 }
 
+//Text
 void DataInfo::printTextInfo(const std::shared_ptr<Text>& text) {
     const std::string& content = text->getContent();
     std::cout << "=== Text Info ===\n";
@@ -164,4 +176,14 @@ void DataInfo::printTextInfo(const std::shared_ptr<Text>& text) {
     std::cout << "  Length    : " << content.size() << " bytes\n";
     std::cout << "  Lines     : " << std::count(content.begin(), content.end(), '\n') + (content.empty() ? 0 : 1) << "\n";
     std::cout << "=================\n";
+}
+
+//Text + Image
+void DataInfo::projectTextContent(const std::shared_ptr<Text>& text, const std::shared_ptr<Image>& img) {
+    
+}
+
+//Text + Pointcloud
+void DataInfo::projectTextContent(const std::shared_ptr<Text>& text, const std::shared_ptr<Pointcloud>& pc) {
+    
 }

@@ -5,6 +5,7 @@
 #include "datatype/Image.h"
 #include "datatype/Text.h"
 #include "datatype/Video.h"
+#include "datatype/Pointcloud.h"
 
 enum class ImageViewType {
     GENERIC,
@@ -24,4 +25,8 @@ public:
     //Text
     static void printTextInfo(const std::shared_ptr<Text>& text);
     static void projectTextContent(const std::shared_ptr<Text>& text, const std::shared_ptr<Image>& img);
+
+    //Pointcloud
+    static void printPointsInfo(const std::shared_ptr<Pointcloud>& pc);
+    static void projectTextContent(const std::shared_ptr<Text>& text, const std::shared_ptr<Pointcloud>& pc);
 };

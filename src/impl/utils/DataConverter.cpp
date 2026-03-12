@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -488,27 +489,107 @@ std::shared_ptr<Video> DataConverter::imagesToVideo(
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// DataConverter::encodeImagesToFile
+// ---------------------------------------------------------------------------
+// Encodes a sequence of images directly to a video file on disk using
+// cv::VideoWriter. This avoids FFmpeg codec/container compatibility issues
+// (H264-in-AVI is poorly supported by most players; VideoWriter uses MJPEG
+// for AVI, which is universally readable).
+//
+// Memory behaviour:
+//   • Each image is loaded on demand inside the encoding loop.
+//   • Its pixel data is unloaded immediately after the frame is written —
+//     peak RAM is one decoded image at a time regardless of how many images
+//     are in the input vector.
+//   • Images passed in without pre-loaded data benefit the most; pre-loaded
+//     images are unloaded by this function after their frame is encoded.
+// ---------------------------------------------------------------------------
+void DataConverter::encodeImagesToFile(
+    const std::vector<std::shared_ptr<Image>>& images,
+    double fps,
+    const std::string& outputPath
+) {
+    if (images.empty())
+        throw std::runtime_error("encodeImagesToFile: no images provided");
+
+    const double actualFps = fps > 0.0 ? fps : 30.0;
+
+    // Choose fourcc based on extension (same mapping as Video::saveToFile)
+    std::string ext = std::filesystem::path(outputPath).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    int fourcc;
+    if      (ext == ".mp4") fourcc = cv::VideoWriter::fourcc('m','p','4','v');
+    else if (ext == ".avi") fourcc = cv::VideoWriter::fourcc('M','J','P','G');
+    else if (ext == ".mkv") fourcc = cv::VideoWriter::fourcc('H','2','6','4');
+    else throw std::runtime_error(
+        "encodeImagesToFile: unsupported extension '" + ext +
+        "'. Supported: .mp4, .avi, .mkv");
+
+    // Load the first image to read dimensions, then keep it for encoding
+    if (images[0]->getImage().empty())
+        images[0]->load();
+    cv::Mat first = OpenCVBridge::bufferToMat(images[0]->getImage());
+    const int width  = first.cols;
+    const int height = first.rows;
+
+    cv::VideoWriter writer(outputPath, fourcc, actualFps,
+                           cv::Size(width, height));
+    if (!writer.isOpened())
+        throw std::runtime_error(
+            "encodeImagesToFile: failed to open VideoWriter for: " + outputPath);
+
+    for (const auto& img : images) {
+        // Load on demand if not already in memory
+        if (img->getImage().empty())
+            img->load();
+
+        cv::Mat mat = OpenCVBridge::bufferToMat(img->getImage());
+
+        // Normalise to 8-bit BGR for VideoWriter
+        if (mat.channels() == 1)       cv::cvtColor(mat, mat, cv::COLOR_GRAY2BGR);
+        else if (mat.channels() == 4)  cv::cvtColor(mat, mat, cv::COLOR_BGRA2BGR);
+        if (mat.depth() != CV_8U)
+            mat.convertTo(mat, CV_8U,
+                mat.depth() == CV_16U ? 1.0 / 256.0 : 255.0);
+
+        writer.write(mat);
+
+        // Release pixel data immediately — keeps peak RAM to one frame
+        img->unload();
+    }
+
+    writer.release();
+}
+
 std::vector<std::shared_ptr<Image>> DataConverter::videoToImages(
     const std::shared_ptr<Video>& video
 ) {
-    // Ensure frames are decoded
-    if (video->getFrames().empty())
-        video->load();
-
-    const auto& frames = video->getFrames();
     std::vector<std::shared_ptr<Image>> images;
-    images.reserve(frames.size());
 
-    for (const auto& buf : frames) {
+    // Helper: encode one ImageBuffer → PNG Image
+    auto makeImage = [](const ImageBuffer& buf) -> std::shared_ptr<Image> {
         cv::Mat mat = OpenCVBridge::bufferToMat(buf);
         std::vector<unsigned char> encoded;
         if (!cv::imencode(".png", mat, encoded))
             throw std::runtime_error("videoToImages: cv::imencode failed for a frame");
-
         auto memSrc = std::make_shared<MemoryDataSource>(std::move(encoded));
         auto img    = std::make_shared<Image>(memSrc, ImageFormat::PNG);
         img->load();
-        images.push_back(std::move(img));
+        return img;
+    };
+
+    if (!video->getFrames().empty()) {
+        // Fast path: frames already decoded — iterate without re-opening source
+        images.reserve(video->getFrames().size());
+        for (const auto& buf : video->getFrames())
+            images.push_back(makeImage(buf));
+    } else {
+        // Streaming path: decode one frame at a time via forEachFrame —
+        // only one frame's pixel data is in RAM at a time.
+        video->forEachFrame([&](std::size_t, const ImageBuffer& buf) {
+            images.push_back(makeImage(buf));
+        });
     }
 
     return images;

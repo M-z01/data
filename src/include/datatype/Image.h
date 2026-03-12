@@ -27,6 +27,9 @@ private:
 public:
     Image(std::shared_ptr<DataSource> src, ImageFormat fmt = ImageFormat::UNKNOWN) : Data(src), format(fmt) {}
     void load() override;
+    // Releases decoded pixel data from RAM while keeping the DataSource intact.
+    // The image can be re-loaded by calling load() again.
+    void unload() { img = ImageBuffer{}; }
     void saveToFile(const std::string& path) const override;
     void saveToFile(const std::string& path, ImageFormat fmt, PixelType pixelType) const;
     const ImageBuffer& getImage() const { return img; }

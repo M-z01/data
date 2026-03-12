@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cctype>
 
+#include <opencv2/opencv.hpp>
+#include "utils/OpenCVBridge.h"
 #include "loaders/ImageFactory.h"
 #include "loaders/TextFactory.h"
 #include "loaders/VideoFactory.h"
@@ -103,27 +105,20 @@ static void testText(const fs::path& src, const fs::path& dst) {
 // Usage (files): main images-to-video <output.mp4|avi|mkv> <fps> <img1> [img2 ...]
 static void testImagesToVideo(const fs::path& dst, double fps,
                               const std::vector<fs::path>& imgPaths) {
-    const std::string dstFmt = videoExtToFmt(dst);
-    if (dstFmt.empty())
-        throw std::runtime_error("Unsupported output video extension: " + dst.string()
-                                 + ". Supported: .mp4, .avi, .mkv");
-
+    // Build Image objects without loading pixel data yet.
+    // encodeImagesToFile loads each image just before encoding its frame
+    // and unloads it immediately after — peak RAM is one decoded image.
     std::vector<std::shared_ptr<Image>> images;
+    images.reserve(imgPaths.size());
     for (const auto& p : imgPaths) {
-        std::cout << "[ImagesToVideo] Loading image: " << p << "\n";
         const std::string fmt = imgExtToFmt(p);
         if (fmt.empty()) throw std::runtime_error("Unsupported image extension: " + p.string());
-        auto img = ImageFactory::createImage(ImageSourceType::FILE, p.string());
-        img->load();
-        DataInfo::printImageInfo(img, inferViewType(p));
-        images.push_back(std::move(img));
+        images.push_back(ImageFactory::createImage(ImageSourceType::FILE, p.string()));
     }
 
     std::cout << "[ImagesToVideo] Encoding " << images.size()
-              << " frame(s) at " << fps << " fps as " << dstFmt << " -> " << dst << "\n";
-    auto video = DataConverter::imagesToVideo(images, fps, dstFmt);
-    DataInfo::printVideoInfo(video);
-    video->saveToFile(dst.string());
+              << " frame(s) at " << fps << " fps -> " << dst << "\n";
+    DataConverter::encodeImagesToFile(images, fps, dst.string());
     std::cout << "[ImagesToVideo] Saved to: " << dst << "\n";
 }
 
@@ -145,21 +140,30 @@ static std::vector<fs::path> collectImagesFromDir(const fs::path& dir) {
 static void testVideoToImages(const fs::path& src, const fs::path& outDir) {
     std::cout << "[VideoToImages] Loading: " << src << "\n";
     auto video = VideoFactory::createVideo(VideoSourceType::FILE, src.string());
-    video->load();
+    // scanMetadata() opens the source and reads fps/dimensions from the first
+    // frame without storing any pixel data — keeps RAM usage near zero.
+    video->scanMetadata();
     DataInfo::printVideoInfo(video);
 
     fs::create_directories(outDir);
-    auto images = DataConverter::videoToImages(video);
-    std::cout << "[VideoToImages] Extracted " << images.size() << " frame(s).\n";
 
-    for (std::size_t i = 0; i < images.size(); ++i) {
+    // Stream decode: only one frame's pixel data is in RAM at a time.
+    // Each frame is PNG-encoded and saved to disk before the next is decoded.
+    std::size_t saved = 0;
+    video->forEachFrame([&](std::size_t i, const ImageBuffer& buf) {
         char fname[64];
         std::snprintf(fname, sizeof(fname), "frame_%04zu.png", i);
         const fs::path outPath = outDir / fname;
-        images[i]->saveToFile(outPath.string());
-        if (i == 0 || (i + 1) % 10 == 0 || i + 1 == images.size())
+
+        cv::Mat mat = OpenCVBridge::bufferToMat(buf);
+        if (!cv::imwrite(outPath.string(), mat))
+            throw std::runtime_error("[VideoToImages] cv::imwrite failed: " + outPath.string());
+
+        ++saved;
+        if (i == 0 || (i + 1) % 10 == 0)
             std::cout << "[VideoToImages] Saved " << outPath << "\n";
-    }
+    });
+    std::cout << "[VideoToImages] Done — saved " << saved << " frame(s) to " << outDir << "\n";
 }
 
 static void testVideo(const fs::path& src, const fs::path& dst) {

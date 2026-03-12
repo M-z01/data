@@ -26,6 +26,16 @@ public:
         const std::string& targetFormat = "MP4"
     );
 
+    // Encodes images directly to an output video file without buffering
+    // the encoded data in memory. Prefer this over imagesToVideo() when
+    // you only need the file and not an in-memory Video object.
+    // Output format is inferred from the file extension (.mp4 / .avi / .mkv).
+    static void encodeImagesToFile(
+        const std::vector<std::shared_ptr<Image>>& images,
+        double fps,
+        const std::string& outputPath
+    );
+
     static std::vector<std::shared_ptr<Image>> videoToImages(
         const std::shared_ptr<Video>& video
     );
