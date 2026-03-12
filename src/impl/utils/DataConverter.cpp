@@ -624,8 +624,26 @@ std::shared_ptr<Pointcloud> DataConverter::convertPointcloudFormat(
     const std::shared_ptr<Pointcloud>& pc,
     const std::string& targetFormat
 ) {
-    // TODO: implement
-    throw std::runtime_error("convertPointcloudFormat not yet implemented");
+    if (!pc->isLoaded())
+        throw std::runtime_error("convertPointcloudFormat: call load() on the source first");
+
+    std::string upper = targetFormat;
+    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+    PointcloudFormat fmt;
+    if      (upper == "PCD") fmt = PointcloudFormat::PCD;
+    else if (upper == "PLY") fmt = PointcloudFormat::PLY;
+    else throw std::invalid_argument("Unsupported pointcloud format: " + targetFormat + ". Supported: PCD, PLY");
+
+    // Copy geometry and colour in-memory — no re-parsing needed.
+    const std::vector<float>& pts = pc->getPoints();
+    // MemoryDataSource requires a byte buffer; use a minimal placeholder
+    // since we will set the parsed data directly on the new object.
+    auto memSrc   = std::make_shared<MemoryDataSource>(std::vector<unsigned char>{});
+    auto converted = std::make_shared<Pointcloud>(memSrc, fmt);
+    converted->setPoints(pts);
+    if (pc->hasColors())
+        converted->setColors(pc->getColors(), pc->hasAlpha());
+    return converted;
 }
 
 std::shared_ptr<Pointcloud> DataConverter::imagesToPointcloud(

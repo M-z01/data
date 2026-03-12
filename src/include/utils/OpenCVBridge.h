@@ -1,6 +1,8 @@
 // Internal-only header – do NOT include from public headers.
 // Provides helpers to convert between cv::Mat and ImageBuffer.
 #pragma once
+#include <map>
+#include <set>
 #include <opencv2/opencv.hpp>
 #include "datatype/ImageBuffer.h"
 
@@ -38,6 +40,27 @@ inline cv::Mat bufferToMat(const ImageBuffer& buf) {
     cv::Mat mat(buf.height, buf.width, type);
     std::memcpy(mat.data, buf.data.data(), buf.data.size());
     return mat;
+}
+
+// Returns a single-channel float Mat from any Mat (any depth/channels).
+inline cv::Mat toFloat1ch(const cv::Mat& src) {
+    cv::Mat f;
+    src.convertTo(f, CV_32F);
+    if (f.channels() > 1) {
+        std::vector<cv::Mat> ch;
+        cv::split(f, ch);
+        f = ch[0];
+    }
+    return f;
+}
+
+// Builds a map from unique float value -> sequential integer ID (0 = first).
+inline std::map<float, int> buildFloatToId(const cv::Mat& f1ch) {
+    std::set<float> uniq(f1ch.begin<float>(), f1ch.end<float>());
+    std::map<float, int> m;
+    int idx = 0;
+    for (float v : uniq) m[v] = idx++;
+    return m;
 }
 
 } // namespace OpenCVBridge

@@ -37,6 +37,7 @@ set(SOURCES
     impl/loaders/VideoFactory.cpp
     impl/utils/DataConverter.cpp
     impl/utils/DataInfo.cpp
+    impl/utils/DataVisualize.cpp
 )
 
 add_executable(main runner/main.cpp ${SOURCES})

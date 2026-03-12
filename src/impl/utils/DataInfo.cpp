@@ -1,34 +1,9 @@
 #include "utils/DataInfo.h"
 #include "utils/OpenCVBridge.h"
 #include <iostream>
-#include <map>
-#include <set>
 #include <opencv2/opencv.hpp>
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-// Returns a single-channel float Mat from any ImageBuffer.
-static cv::Mat toFloat1ch(const cv::Mat& src) {
-    cv::Mat f;
-    src.convertTo(f, CV_32F);
-    if (f.channels() > 1) {
-        std::vector<cv::Mat> ch;
-        cv::split(f, ch);
-        f = ch[0];
-    }
-    return f;
-}
-
-// Builds a map from unique float value -> sequential integer ID (0 = first).
-static std::map<float, int> buildFloatToId(const cv::Mat& f1ch) {
-    std::set<float> uniq(f1ch.begin<float>(), f1ch.end<float>());
-    std::map<float, int> m;
-    int idx = 0;
-    for (float v : uniq) m[v] = idx++;
-    return m;
-}
-
-// ── public methods ────────────────────────────────────────────────────────────
+using namespace OpenCVBridge;
 
 //Image
 void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType type) {
@@ -64,79 +39,6 @@ void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType t
         std::cout << "  Max depth : " << maxVal << "\n";
     }
     std::cout << "==================\n";
-}
-
-void DataInfo::displayImage(const std::shared_ptr<Image>& img, ImageViewType type) {
-    const ImageBuffer& buf = img->getImage();
-    cv::Mat mat = OpenCVBridge::bufferToMat(buf);
-
-    if (type == ImageViewType::MASK) {
-        cv::Mat f = toFloat1ch(mat);
-        auto float_to_id = buildFloatToId(f);
-
-        // Build direct float→color map so we only need one pass over the image.
-        cv::RNG rng(42);
-        std::map<float, cv::Vec3b> float_to_color;
-        for (const auto& [val, uid] : float_to_id) {
-            float_to_color[val] = (val == 1.0f)
-                ? cv::Vec3b(75, 75, 75)
-                : cv::Vec3b(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
-        }
-
-        // Single-pass coloring via raw row pointers (no id_mat intermediate).
-        cv::Mat color_mask(f.size(), CV_8UC3, cv::Scalar(0, 0, 0));
-        for (int r = 0; r < f.rows; ++r) {
-            const float* fRow = f.ptr<float>(r);
-            cv::Vec3b*   cRow = color_mask.ptr<cv::Vec3b>(r);
-            for (int c = 0; c < f.cols; ++c)
-                cRow[c] = float_to_color[fRow[c]];
-        }
-
-        // Overlay UID label at centroid of each object (skip background).
-        // cv::compare + cv::moments are already vectorised internally.
-        for (const auto& [val, uid] : float_to_id) {
-            if (val == 1.0f) continue;
-            cv::Mat bin;
-            cv::compare(f, val, bin, cv::CMP_EQ);
-            cv::Moments m = cv::moments(bin, true);
-            if (m.m00 > 0) {
-                int cx = static_cast<int>(m.m10 / m.m00);
-                int cy = static_cast<int>(m.m01 / m.m00);
-                cv::putText(color_mask, std::to_string(uid),
-                            cv::Point(cx, cy),
-                            cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                            cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
-            }
-        }
-
-        cv::imshow("Mask (pseudo-color)", color_mask);
-        cv::waitKey(0);
-
-    } else if (type == ImageViewType::DEPTH) {
-        cv::Mat f = toFloat1ch(mat);
-        double minVal, maxVal;
-        cv::minMaxLoc(f, &minVal, &maxVal);
-
-        cv::Mat norm;
-        cv::normalize(f, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
-        cv::Mat colored;
-        cv::applyColorMap(norm, colored, cv::COLORMAP_JET);
-
-        std::string title = "Depth  [min=" + std::to_string(minVal)
-                          + "  max=" + std::to_string(maxVal) + "]";
-        cv::imshow(title, colored);
-        cv::waitKey(0);
-
-    } else {
-        // Generic: normalize if needed and display
-        cv::Mat display;
-        if (mat.depth() == CV_32F || mat.depth() == CV_16U)
-            cv::normalize(mat, display, 0, 255, cv::NORM_MINMAX, CV_8U);
-        else
-            display = mat;
-        cv::imshow("Image", display);
-        cv::waitKey(0);
-    }
 }
 
 //Video
@@ -175,12 +77,50 @@ void DataInfo::printTextInfo(const std::shared_ptr<Text>& text) {
     std::cout << "=================\n";
 }
 
-//Text + Image
-void DataInfo::projectTextContent(const std::shared_ptr<Text>& text, const std::shared_ptr<Image>& img) {
-    
-}
+//Pointcloud
+void DataInfo::printPointsInfo(const std::shared_ptr<Pointcloud>& pc) {
+    const std::vector<float>& pts = pc->getPoints();
+    int numPoints = (int)pts.size() / 3;
 
-//Text + Pointcloud
-void DataInfo::projectTextContent(const std::shared_ptr<Text>& text, const std::shared_ptr<Pointcloud>& pc) {
-    
+    std::cout << "=== Pointcloud Info ===\n";
+    std::cout << "  Format    : " << toString(pc->getFormat()) << "\n";
+    std::cout << "  Points    : " << numPoints << "\n";
+
+    if (numPoints > 0) {
+        float minX = pts[0], maxX = pts[0];
+        float minY = pts[1], maxY = pts[1];
+        float minZ = pts[2], maxZ = pts[2];
+        for (int i = 0; i < numPoints; ++i) {
+            float x = pts[i*3], y = pts[i*3+1], z = pts[i*3+2];
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        }
+        std::cout << "  X range   : [" << minX << ", " << maxX << "]\n";
+        std::cout << "  Y range   : [" << minY << ", " << maxY << "]\n";
+        std::cout << "  Z range   : [" << minZ << ", " << maxZ << "]\n";
+    }
+
+    if (pc->hasColors()) {
+        const std::vector<uint8_t>& colors = pc->getColors();
+        int ch = pc->hasAlpha() ? 4 : 3;
+        std::cout << "  Has color : yes (" << (pc->hasAlpha() ? "RGBA" : "RGB") << ")\n";
+        if (numPoints > 0) {
+            int minR = 255, maxR = 0;
+            int minG = 255, maxG = 0;
+            int minB = 255, maxB = 0;
+            for (int i = 0; i < numPoints && (i + 1) * ch <= (int)colors.size(); ++i) {
+                int r = colors[i*ch+0], g = colors[i*ch+1], b = colors[i*ch+2];
+                if (r < minR) minR = r; if (r > maxR) maxR = r;
+                if (g < minG) minG = g; if (g > maxG) maxG = g;
+                if (b < minB) minB = b; if (b > maxB) maxB = b;
+            }
+            std::cout << "  R range   : [" << minR << ", " << maxR << "]\n";
+            std::cout << "  G range   : [" << minG << ", " << maxG << "]\n";
+            std::cout << "  B range   : [" << minB << ", " << maxB << "]\n";
+        }
+    } else {
+        std::cout << "  Has color : no\n";
+    }
+    std::cout << "=======================\n";
 }

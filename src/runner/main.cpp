@@ -8,9 +8,11 @@
 #include "utils/OpenCVBridge.h"
 #include "utils/FormatDetector.h"
 #include "loaders/ImageFactory.h"
+#include "loaders/PointcloudFactory.h"
 #include "loaders/TextFactory.h"
 #include "loaders/VideoFactory.h"
 #include "utils/DataInfo.h"
+#include "utils/DataVisualize.h"
 #include "utils/DataConverter.h"
 
 namespace fs = std::filesystem;
@@ -34,7 +36,7 @@ static void testImage(const fs::path& src, const fs::path& dst) {
 
     const ImageViewType viewType = inferViewType(src);
     DataInfo::printImageInfo(img, viewType);
-    DataInfo::displayImage(img, viewType);
+    DataVisualize::displayImage(img, viewType);
 
     if (!dst.empty()) {
         const std::string srcFmt = FormatDetector::imageFormat(src.string());
@@ -143,6 +145,26 @@ static void testVideoToImages(const fs::path& src, const fs::path& outDir) {
     std::cout << "[VideoToImages] Done — saved " << saved << " frame(s) to " << outDir << "\n";
 }
 
+static void testPointcloud(const fs::path& src, const fs::path& dst) {
+    std::cout << "[Pointcloud] Loading: " << src << "\n";
+    auto pc = PointcloudFactory::createPointcloud(PointcloudSourceType::FILE, src.string());
+    pc->load();
+    DataInfo::printPointsInfo(pc);
+
+    if (!dst.empty()) {
+        const std::string srcFmt = FormatDetector::pointcloudFormat(src.string());
+        const std::string dstFmt = FormatDetector::pointcloudFormat(dst.string());
+        if (!dstFmt.empty() && dstFmt != srcFmt) {
+            std::cout << "[Pointcloud] Converting " << srcFmt << " -> " << dstFmt << "\n";
+            auto converted = DataConverter::convertPointcloudFormat(pc, dstFmt);
+            converted->saveToFile(dst.string());
+        } else {
+            pc->saveToFile(dst.string());
+        }
+        std::cout << "[Pointcloud] Saved to: " << dst << "\n";
+    }
+}
+
 static void testVideo(const fs::path& src, const fs::path& dst) {
     std::cout << "[Video] Loading: " << src << "\n";
     auto video = VideoFactory::createVideo(VideoSourceType::FILE, src.string());
@@ -167,7 +189,7 @@ int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage:\n"
                   << "  " << argv[0] << " <input_path> [output_path]\n"
-                  << "      Supported types: jpg, jpeg, png, exr, txt, csv, json, mp4, avi, mkv\n"
+                  << "      Supported types: jpg, jpeg, png, exr, txt, csv, json, mp4, avi, mkv, pcd, ply\n"
                   << "  " << argv[0] << " images-to-video  <input_dir> <output.mp4|avi|mkv> [fps=30]\n"
                   << "  " << argv[0] << " images-to-video  <output.mp4|avi|mkv> <fps> <img1> [img2 ...]\n"
                   << "  " << argv[0] << " video-to-images  <input_video> <output_dir>\n";
@@ -244,6 +266,8 @@ int main(int argc, char* argv[]) {
             testText(src, dst);
         } else if (type == "video") {
             testVideo(src, dst);
+        } else if (type == "pointcloud") {
+            testPointcloud(src, dst);
         } else {
             std::cerr << "Unsupported file extension: " << src.extension() << "\n";
             return 1;
