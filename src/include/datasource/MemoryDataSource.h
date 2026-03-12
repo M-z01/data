@@ -13,5 +13,5 @@ public:
     explicit MemoryDataSource(std::vector<unsigned char> bytes)
         : data(std::move(bytes)) {}
 
-    std::vector<unsigned char> getRawBytes() override { return data; }
+    const std::vector<unsigned char>& getRawBytes() override { return data; }
 };

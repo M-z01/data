@@ -5,12 +5,13 @@ void Pointcloud::load() {
     if (format == PointcloudFormat::UNKNOWN)
         throw std::runtime_error("Pointcloud format not set before load()");
 
-    std::vector<unsigned char> bytes = source->getRawBytes();
+    const std::vector<unsigned char>& bytes = source->getRawBytes();
     if (bytes.empty()) {
         throw std::runtime_error("Empty data from source");
     }
 
     // TODO: parse bytes according to format (PCD or PLY)
+    loaded_ = true;
 }
 
 void Pointcloud::saveToFile(const std::string& path, PointcloudFormat fmt) const {

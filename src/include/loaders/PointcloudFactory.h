@@ -2,12 +2,10 @@
 #include <memory>
 #include <string>
 #include "datatype/Pointcloud.h"
-#include "datasource/FileDataSource.h"
+#include "datasource/DataSourceFactory.h"
 
-enum class PointcloudSourceType {
-    FILE,
-    STREAM
-};
+// Backward-compatible alias — existing call sites (PointcloudSourceType::FILE) are unchanged.
+using PointcloudSourceType = SourceType;
 
 class PointcloudFactory {
 public:

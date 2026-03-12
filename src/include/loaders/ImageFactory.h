@@ -2,12 +2,10 @@
 #include <memory>
 #include <string>
 #include "datatype/Image.h"
-#include "datasource/FileDataSource.h"
+#include "datasource/DataSourceFactory.h"
 
-enum class ImageSourceType {
-    FILE,
-    STREAM
-};
+// Backward-compatible alias — existing call sites (ImageSourceType::FILE) are unchanged.
+using ImageSourceType = SourceType;
 
 class ImageFactory {
 public:

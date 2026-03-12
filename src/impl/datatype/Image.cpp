@@ -6,13 +6,14 @@ void Image::load() {
     if (format == ImageFormat::UNKNOWN)
         throw std::runtime_error("Image format not set before load()");
 
-    std::vector<unsigned char> bytes = source->getRawBytes();
+    const std::vector<unsigned char>& bytes = source->getRawBytes();
     cv::Mat mat = cv::imdecode(bytes, cv::IMREAD_UNCHANGED);
     if (mat.empty()) {
         throw std::runtime_error("Failed to decode image from data source");
     }
 
     img = OpenCVBridge::matToBuffer(mat);
+    loaded_ = true;
 }
 
 void Image::saveToFile(const std::string& path, ImageFormat fmt, PixelType pixelType) const {

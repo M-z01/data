@@ -2,12 +2,10 @@
 #include <memory>
 #include <string>
 #include "datatype/Text.h"
-#include "datasource/FileDataSource.h"
+#include "datasource/DataSourceFactory.h"
 
-enum class TextSourceType {
-    FILE,
-    STREAM
-};
+// Backward-compatible alias — existing call sites (TextSourceType::FILE) are unchanged.
+using TextSourceType = SourceType;
 
 class TextFactory {
 public:

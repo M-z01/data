@@ -74,33 +74,30 @@ void DataInfo::displayImage(const std::shared_ptr<Image>& img, ImageViewType typ
         cv::Mat f = toFloat1ch(mat);
         auto float_to_id = buildFloatToId(f);
 
-        // Build per-pixel ID map
-        cv::Mat id_mat(f.size(), CV_32S);
-        for (int r = 0; r < f.rows; ++r)
-            for (int c = 0; c < f.cols; ++c)
-                id_mat.at<int>(r, c) = float_to_id[f.at<float>(r, c)];
-
-        // Assign random colors (seed 42, matching mask.py)
+        // Build direct float→color map so we only need one pass over the image.
         cv::RNG rng(42);
-        std::map<int, cv::Vec3b> id_colors;
+        std::map<float, cv::Vec3b> float_to_color;
         for (const auto& [val, uid] : float_to_id) {
-            id_colors[uid] = (val == 1.0f)
-                ? cv::Vec3b(75, 75, 75)   // background (value=1) → gray
+            float_to_color[val] = (val == 1.0f)
+                ? cv::Vec3b(75, 75, 75)
                 : cv::Vec3b(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
         }
 
-        // Paint color mask
+        // Single-pass coloring via raw row pointers (no id_mat intermediate).
         cv::Mat color_mask(f.size(), CV_8UC3, cv::Scalar(0, 0, 0));
-        for (int r = 0; r < id_mat.rows; ++r)
-            for (int c = 0; c < id_mat.cols; ++c)
-                color_mask.at<cv::Vec3b>(r, c) = id_colors[id_mat.at<int>(r, c)];
+        for (int r = 0; r < f.rows; ++r) {
+            const float* fRow = f.ptr<float>(r);
+            cv::Vec3b*   cRow = color_mask.ptr<cv::Vec3b>(r);
+            for (int c = 0; c < f.cols; ++c)
+                cRow[c] = float_to_color[fRow[c]];
+        }
 
-        // Overlay UID label at centroid of each object (skip background)
+        // Overlay UID label at centroid of each object (skip background).
+        // cv::compare + cv::moments are already vectorised internally.
         for (const auto& [val, uid] : float_to_id) {
             if (val == 1.0f) continue;
             cv::Mat bin;
-            cv::compare(id_mat, uid, bin, cv::CMP_EQ);
-            bin.convertTo(bin, CV_8U);
+            cv::compare(f, val, bin, cv::CMP_EQ);
             cv::Moments m = cv::moments(bin, true);
             if (m.m00 > 0) {
                 int cx = static_cast<int>(m.m10 / m.m00);

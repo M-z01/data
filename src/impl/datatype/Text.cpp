@@ -6,12 +6,13 @@ void Text::load() {
     if (format == TextFormat::UNKNOWN)
         throw std::runtime_error("Text format not set before load()");
 
-    std::vector<unsigned char> bytes = source->getRawBytes();
+    const std::vector<unsigned char>& bytes = source->getRawBytes();
     if (bytes.empty()) {
         throw std::runtime_error("Empty data from source");
     }
 
-    content = std::string(bytes.begin(), bytes.end());
+    content.assign(bytes.begin(), bytes.end());
+    loaded_ = true;
 }
 
 void Text::saveToFile(const std::string& path, TextFormat fmt) const {

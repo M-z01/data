@@ -243,6 +243,7 @@ void Video::load() {
         metaHeight   = frames[0].height;
         metaChannels = frames[0].channels;
     }
+    loaded_ = true;
 }
 
 // ---------------------------------------------------------------------------

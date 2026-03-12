@@ -1,35 +1,17 @@
 #include "loaders/PointcloudFactory.h"
+#include "utils/FormatDetector.h"
 #include <stdexcept>
-#include <filesystem>
-
-namespace fs = std::filesystem;
-
-static PointcloudFormat resolvePointcloudFormat(const std::string& path) {
-    std::string ext = fs::path(path).extension().string();
-    if (ext == ".pcd") return PointcloudFormat::PCD;
-    if (ext == ".ply") return PointcloudFormat::PLY;
-    return PointcloudFormat::UNKNOWN;
-}
 
 std::shared_ptr<Pointcloud> PointcloudFactory::createPointcloud(PointcloudSourceType type, const std::string& pathOrUri) {
-    std::shared_ptr<DataSource> source;
+    auto source = createDataSource(type, pathOrUri);
 
-    switch (type) {
-        case PointcloudSourceType::FILE:
-            source = std::make_shared<FileDataSource>(pathOrUri);
-            break;
-
-        case PointcloudSourceType::STREAM:
-            // TODO: Implement stream data source
-            throw std::runtime_error("Stream data source not implemented yet");
-            break;
-
-        default: throw std::invalid_argument("Unsupported pointcloud source type");
-    }
-
-    PointcloudFormat fmt = resolvePointcloudFormat(pathOrUri);
-    if (fmt == PointcloudFormat::UNKNOWN)
+    const std::string fmtStr = FormatDetector::pointcloudFormat(pathOrUri);
+    if (fmtStr.empty())
         throw std::runtime_error("Unrecognised pointcloud extension: " + pathOrUri);
+
+    PointcloudFormat fmt = PointcloudFormat::UNKNOWN;
+    if      (fmtStr == "PCD") fmt = PointcloudFormat::PCD;
+    else if (fmtStr == "PLY") fmt = PointcloudFormat::PLY;
 
     return std::make_shared<Pointcloud>(source, fmt);
 }

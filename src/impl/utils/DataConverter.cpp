@@ -131,10 +131,12 @@ std::shared_ptr<Image> DataConverter::convertImageFormat(
         throw std::runtime_error("cv::imencode failed for format: " + targetFormat);
     }
 
-    // Wrap the encoded bytes in a MemoryDataSource and build a new Image
-    auto memSrc   = std::make_shared<MemoryDataSource>(std::move(buf));
+    // Keep the encoded bytes in a MemoryDataSource so the Image can be re-loaded
+    // or saved later.  Directly set the decoded buffer from the cv::Mat we already
+    // hold — avoids an unnecessary decode roundtrip.
+    auto memSrc    = std::make_shared<MemoryDataSource>(std::move(buf));
     auto converted = std::make_shared<Image>(memSrc, fmt);
-    converted->load();
+    converted->setImage(OpenCVBridge::matToBuffer(mat));
 
     return converted;
 }

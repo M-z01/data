@@ -6,6 +6,7 @@
 
 #include <opencv2/opencv.hpp>
 #include "utils/OpenCVBridge.h"
+#include "utils/FormatDetector.h"
 #include "loaders/ImageFactory.h"
 #include "loaders/TextFactory.h"
 #include "loaders/VideoFactory.h"
@@ -17,30 +18,6 @@ namespace fs = std::filesystem;
 static std::string lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
     return s;
-}
-
-static std::string imgExtToFmt(const fs::path& p) {
-    const std::string ext = lower(p.extension().string());
-    if (ext == ".jpg" || ext == ".jpeg") return "JPG";
-    if (ext == ".png")                   return "PNG";
-    if (ext == ".exr")                   return "EXR";
-    return "";
-}
-
-static std::string videoExtToFmt(const fs::path& p) {
-    const std::string ext = lower(p.extension().string());
-    if (ext == ".mp4") return "MP4";
-    if (ext == ".avi") return "AVI";
-    if (ext == ".mkv") return "MKV";
-    return "";
-}
-
-static std::string textExtToFmt(const fs::path& p) {
-    const std::string ext = lower(p.extension().string());
-    if (ext == ".txt")  return "TXT";
-    if (ext == ".csv")  return "CSV";
-    if (ext == ".json") return "JSON";
-    return "";
 }
 
 static ImageViewType inferViewType(const fs::path& src) {
@@ -60,8 +37,8 @@ static void testImage(const fs::path& src, const fs::path& dst) {
     DataInfo::displayImage(img, viewType);
 
     if (!dst.empty()) {
-        const std::string srcFmt = imgExtToFmt(src);
-        const std::string dstFmt = imgExtToFmt(dst);
+        const std::string srcFmt = FormatDetector::imageFormat(src.string());
+        const std::string dstFmt = FormatDetector::imageFormat(dst.string());
         if (!dstFmt.empty() && dstFmt != srcFmt) {
             std::cout << "[Image] Converting " << srcFmt << " -> " << dstFmt << "\n";
             auto converted = DataConverter::convertImageFormat(img, dstFmt);
@@ -87,8 +64,8 @@ static void testText(const fs::path& src, const fs::path& dst) {
               << "\n---\n";
 
     if (!dst.empty()) {
-        const std::string srcFmt = textExtToFmt(src);
-        const std::string dstFmt = textExtToFmt(dst);
+        const std::string srcFmt = FormatDetector::textFormat(src.string());
+        const std::string dstFmt = FormatDetector::textFormat(dst.string());
         if (!dstFmt.empty() && dstFmt != srcFmt) {
             std::cout << "[Text] Converting " << srcFmt << " -> " << dstFmt << "\n";
             auto converted = DataConverter::convertTextFormat(text, dstFmt);
@@ -111,7 +88,7 @@ static void testImagesToVideo(const fs::path& dst, double fps,
     std::vector<std::shared_ptr<Image>> images;
     images.reserve(imgPaths.size());
     for (const auto& p : imgPaths) {
-        const std::string fmt = imgExtToFmt(p);
+        const std::string fmt = FormatDetector::imageFormat(p.string());
         if (fmt.empty()) throw std::runtime_error("Unsupported image extension: " + p.string());
         images.push_back(ImageFactory::createImage(ImageSourceType::FILE, p.string()));
     }
@@ -126,7 +103,7 @@ static std::vector<fs::path> collectImagesFromDir(const fs::path& dir) {
     std::vector<fs::path> paths;
     for (const auto& entry : fs::directory_iterator(dir)) {
         if (!entry.is_regular_file()) continue;
-        if (!imgExtToFmt(entry.path()).empty())
+        if (!FormatDetector::imageFormat(entry.path().string()).empty())
             paths.push_back(entry.path());
     }
     std::sort(paths.begin(), paths.end());
@@ -173,8 +150,8 @@ static void testVideo(const fs::path& src, const fs::path& dst) {
     DataInfo::printVideoInfo(video);
 
     if (!dst.empty()) {
-        const std::string srcFmt = videoExtToFmt(src);
-        const std::string dstFmt = videoExtToFmt(dst);
+        const std::string srcFmt = FormatDetector::videoFormat(src.string());
+        const std::string dstFmt = FormatDetector::videoFormat(dst.string());
         if (!dstFmt.empty() && dstFmt != srcFmt) {
             std::cout << "[Video] Converting " << srcFmt << " -> " << dstFmt << "\n";
             auto converted = DataConverter::convertVideoFormat(video, dstFmt);
@@ -260,15 +237,15 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        const std::string ext = lower(src.extension().string());
-        if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".exr") {
+        const std::string type = FormatDetector::detectType(src.string());
+        if (type == "image") {
             testImage(src, dst);
-        } else if (ext == ".txt" || ext == ".csv" || ext == ".json") {
+        } else if (type == "text") {
             testText(src, dst);
-        } else if (ext == ".mp4" || ext == ".avi" || ext == ".mkv") {
+        } else if (type == "video") {
             testVideo(src, dst);
         } else {
-            std::cerr << "Unsupported file extension: " << ext << "\n";
+            std::cerr << "Unsupported file extension: " << src.extension() << "\n";
             return 1;
         }
     } catch (const std::exception& e) {

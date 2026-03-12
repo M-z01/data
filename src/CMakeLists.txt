@@ -3,19 +3,18 @@ project(DataProcessing CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Require C++11
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add include directories
-include_directories(include)
-include_directories(impl)
+# Default to Release (-O3) when the user doesn't specify a build type.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+set(CMAKE_CXX_FLAGS_DEBUG   "-O0 -g")
 
-# Find OpenCV
+# Find dependencies
 find_package(OpenCV REQUIRED)
-include_directories(${OpenCV_INCLUDE_DIRS})
-
-# Find FFmpeg via pkg-config
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED
     libavformat
@@ -23,16 +22,34 @@ pkg_check_modules(FFMPEG REQUIRED
     libavutil
     libswscale
 )
-include_directories(${FFMPEG_INCLUDE_DIRS})
 
-# Gather all source files
-file(GLOB_RECURSE SOURCES "impl/*.cpp")
+# Explicit source list — CMake picks up new files automatically on re-configure
+# without the glob re-scan problem that file(GLOB_RECURSE ...) has.
+set(SOURCES
+    impl/datasource/FileDataSource.cpp
+    impl/datatype/Image.cpp
+    impl/datatype/Pointcloud.cpp
+    impl/datatype/Text.cpp
+    impl/datatype/Video.cpp
+    impl/loaders/ImageFactory.cpp
+    impl/loaders/PointcloudFactory.cpp
+    impl/loaders/TextFactory.cpp
+    impl/loaders/VideoFactory.cpp
+    impl/utils/DataConverter.cpp
+    impl/utils/DataInfo.cpp
+)
 
-# Create executable
 add_executable(main runner/main.cpp ${SOURCES})
 
-# Link libraries
-target_link_libraries(main
+# Only expose the public include/ directory; impl/ is internal and should not
+# be on the include path for external consumers.
+target_include_directories(main PRIVATE
+    include
+    ${OpenCV_INCLUDE_DIRS}
+    ${FFMPEG_INCLUDE_DIRS}
+)
+
+target_link_libraries(main PRIVATE
     ${OpenCV_LIBS}
     ${FFMPEG_LIBRARIES}
 )

@@ -29,7 +29,9 @@ public:
     void load() override;
     // Releases decoded pixel data from RAM while keeping the DataSource intact.
     // The image can be re-loaded by calling load() again.
-    void unload() { img = ImageBuffer{}; }
+    void unload() { img = ImageBuffer{}; loaded_ = false; }
+    // Directly set the decoded buffer (skips re-decoding when the cv::Mat is already available).
+    void setImage(ImageBuffer buf) { img = std::move(buf); loaded_ = true; }
     void saveToFile(const std::string& path) const override;
     void saveToFile(const std::string& path, ImageFormat fmt, PixelType pixelType) const;
     const ImageBuffer& getImage() const { return img; }
