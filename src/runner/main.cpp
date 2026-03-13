@@ -150,6 +150,7 @@ static void testPointcloud(const fs::path& src, const fs::path& dst) {
     auto pc = PointcloudFactory::createPointcloud(PointcloudSourceType::FILE, src.string());
     pc->load();
     DataInfo::printPointsInfo(pc);
+    DataVisualize::displayPointcloud(pc);
 
     if (!dst.empty()) {
         const std::string srcFmt = FormatDetector::pointcloudFormat(src.string());
@@ -185,6 +186,135 @@ static void testVideo(const fs::path& src, const fs::path& dst) {
     }
 }
 
+// project-bbox: project 3D bounding boxes from metadata onto images or point clouds
+// Usage (single):  main project-bbox <meta.json> <image_or_pointcloud> [output_path]
+// Usage (batch):   main project-bbox <base_dir>  (expects color/, meta/, points/ subdirs)
+static void testProjectBBox(int argc, char* argv[]) {
+    if (argc < 4) {
+        std::cerr << "Usage:\n"
+                  << "  " << argv[0] << " project-bbox <meta.json> <image.png|ply> [output_path]\n"
+                  << "  " << argv[0] << " project-bbox <base_dir>\n"
+                  << "    base_dir must contain color/, meta/, and optionally points/ subdirs\n";
+        std::exit(1);
+    }
+
+    const fs::path arg2 = argv[2];
+
+    // ── Batch mode: base_dir with color/ + meta/ (+ optional points/) ────────
+    if (fs::is_directory(arg2)) {
+        const fs::path colorDir  = arg2 / "color";
+        const fs::path metaDir   = arg2 / "meta";
+        const fs::path pointsDir = arg2 / "points";
+
+        if (!fs::is_directory(metaDir)) {
+            std::cerr << "Error: meta/ subdirectory not found in " << arg2 << "\n";
+            std::exit(1);
+        }
+
+        // Determine whether to project onto images or point clouds
+        bool hasColor  = fs::is_directory(colorDir);
+        bool hasPoints = fs::is_directory(pointsDir);
+
+        if (!hasColor && !hasPoints) {
+            std::cerr << "Error: Need color/ or points/ subdirectory in " << arg2 << "\n";
+            std::exit(1);
+        }
+
+        // Collect meta files (only numeric frame filenames)
+        std::vector<std::string> frameIds;
+        for (auto& entry : fs::directory_iterator(metaDir)) {
+            if (!entry.is_regular_file()) continue;
+            std::string stem = entry.path().stem().string();
+            bool allDigits = !stem.empty() && std::all_of(stem.begin(), stem.end(), ::isdigit);
+            if (allDigits && entry.path().extension() == ".json")
+                frameIds.push_back(stem);
+        }
+        std::sort(frameIds.begin(), frameIds.end());
+        std::cout << "Found " << frameIds.size() << " metadata frames\n";
+
+        if (hasColor) {
+            fs::path outDir = arg2 / "bbox_projections";
+            fs::create_directories(outDir);
+            int ok = 0, fail = 0;
+            for (const auto& fid : frameIds) {
+                fs::path imgPath  = colorDir / (fid + ".png");
+                fs::path metaPath = metaDir  / (fid + ".json");
+                if (!fs::exists(imgPath))  { ++fail; continue; }
+                if (!fs::exists(metaPath)) { ++fail; continue; }
+
+                auto text = TextFactory::createText(TextSourceType::FILE, metaPath.string());
+                text->load();
+                auto img = ImageFactory::createImage(ImageSourceType::FILE, imgPath.string());
+                img->load();
+                DataVisualize::projectTextContent(text, img);
+                // Save (projectTextContent already stored the drawn buffer in img)
+                img->saveToFile((outDir / (fid + ".png")).string());
+                ++ok;
+            }
+            std::cout << "Image projection complete: " << ok << " ok, " << fail << " failed\n"
+                      << "Results saved to " << outDir << "\n";
+        }
+
+        if (hasPoints) {
+            fs::path outDir = arg2 / "bbox_pointclouds";
+            fs::create_directories(outDir);
+            int ok = 0, fail = 0;
+            for (const auto& fid : frameIds) {
+                fs::path plyPath  = pointsDir / (fid + ".ply");
+                fs::path metaPath = metaDir   / (fid + ".json");
+                if (!fs::exists(plyPath))  { ++fail; continue; }
+                if (!fs::exists(metaPath)) { ++fail; continue; }
+
+                auto text = TextFactory::createText(TextSourceType::FILE, metaPath.string());
+                text->load();
+                auto pc = PointcloudFactory::createPointcloud(PointcloudSourceType::FILE, plyPath.string());
+                pc->load();
+                DataVisualize::projectTextContent(text, pc);
+                pc->saveToFile((outDir / (fid + ".ply")).string());
+                ++ok;
+            }
+            std::cout << "Pointcloud projection complete: " << ok << " ok, " << fail << " failed\n"
+                      << "Results saved to " << outDir << "\n";
+        }
+        return;
+    }
+
+    // ── Single-file mode: project-bbox <meta.json> <image_or_pointcloud> [output] ──
+    const fs::path metaPath  = argv[2];
+    const fs::path dataPath  = argv[3];
+    const fs::path outputPath = (argc >= 5) ? fs::path(argv[4]) : fs::path{};
+
+    if (!fs::exists(metaPath) || !fs::exists(dataPath)) {
+        std::cerr << "Error: file(s) not found\n";
+        std::exit(1);
+    }
+
+    auto text = TextFactory::createText(TextSourceType::FILE, metaPath.string());
+    text->load();
+
+    const std::string dataType = FormatDetector::detectType(dataPath.string());
+    if (dataType == "image") {
+        auto img = ImageFactory::createImage(ImageSourceType::FILE, dataPath.string());
+        img->load();
+        DataVisualize::projectTextContent(text, img);
+        if (!outputPath.empty()) {
+            img->saveToFile(outputPath.string());
+            std::cout << "[ProjectBBox] Saved to " << outputPath << "\n";
+        }
+    } else if (dataType == "pointcloud") {
+        auto pc = PointcloudFactory::createPointcloud(PointcloudSourceType::FILE, dataPath.string());
+        pc->load();
+        DataVisualize::projectTextContent(text, pc);
+        if (!outputPath.empty()) {
+            pc->saveToFile(outputPath.string());
+            std::cout << "[ProjectBBox] Saved to " << outputPath << "\n";
+        }
+    } else {
+        std::cerr << "Error: unsupported data type for projection: " << dataPath.extension() << "\n";
+        std::exit(1);
+    }
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage:\n"
@@ -192,13 +322,20 @@ int main(int argc, char* argv[]) {
                   << "      Supported types: jpg, jpeg, png, exr, txt, csv, json, mp4, avi, mkv, pcd, ply\n"
                   << "  " << argv[0] << " images-to-video  <input_dir> <output.mp4|avi|mkv> [fps=30]\n"
                   << "  " << argv[0] << " images-to-video  <output.mp4|avi|mkv> <fps> <img1> [img2 ...]\n"
-                  << "  " << argv[0] << " video-to-images  <input_video> <output_dir>\n";
+                  << "  " << argv[0] << " video-to-images  <input_video> <output_dir>\n"
+                  << "  " << argv[0] << " project-bbox     <meta.json> <image|ply> [output]\n"
+                  << "  " << argv[0] << " project-bbox     <base_dir>\n";
         return 1;
     }
 
     const std::string mode = argv[1];
 
     try {
+        if (mode == "project-bbox" || mode == "project_bbox") {
+            testProjectBBox(argc, argv);
+            return 0;
+        }
+
         if (mode == "images-to-video" || mode == "images-to-videos") {
             if (argc < 4) {
                 std::cerr << "Usage (dir):   " << argv[0]

@@ -109,6 +109,12 @@ static PointcloudData parsePCD(const std::vector<unsigned char>& bytes) {
     }
     if (xi < 0 || yi < 0 || zi < 0)
         throw std::runtime_error("PCD file missing x/y/z fields");
+    if (numPoints < 0)
+        throw std::runtime_error("PCD file has invalid POINTS count");
+    if (sizes.size() != fields.size())
+        throw std::runtime_error("PCD FIELDS/SIZE count mismatch");
+    if (!counts.empty() && counts.size() != fields.size())
+        throw std::runtime_error("PCD FIELDS/COUNT count mismatch");
 
     // Decide colour mode
     bool colorPacked = (rgbaI >= 0 || rgbI >= 0);
@@ -174,7 +180,14 @@ static PointcloudData parsePCD(const std::vector<unsigned char>& bytes) {
             off += sizes[i] * (counts.empty() ? 1 : counts[i]);
         }
         int stride = off;
+        if (stride <= 0)
+            throw std::runtime_error("PCD binary: invalid stride");
         const unsigned char* base = bytes.data() + pos;
+        size_t available = size - pos;
+        if (available < static_cast<size_t>(numPoints) * stride)
+            throw std::runtime_error("PCD binary data truncated: expected "
+                + std::to_string(static_cast<size_t>(numPoints) * stride)
+                + " bytes but only " + std::to_string(available) + " available");
         for (int n = 0; n < numPoints; ++n) {
             const unsigned char* pt = base + n * stride;
             float x, y, z;
@@ -275,6 +288,8 @@ static PointcloudData parsePLY(const std::vector<unsigned char>& bytes) {
     }
     if (xi < 0 || yi < 0 || zi < 0)
         throw std::runtime_error("PLY file missing x/y/z vertex properties");
+    if (numVertices < 0)
+        throw std::runtime_error("PLY file has invalid vertex count");
 
     bool hasColor = (ri >= 0 && gi >= 0 && bi >= 0);
     bool hasAlpha = hasColor && (ai >= 0);
@@ -331,7 +346,14 @@ static PointcloudData parsePLY(const std::vector<unsigned char>& bytes) {
             off         += propSizes[i];
         }
         int stride = off;
+        if (stride <= 0)
+            throw std::runtime_error("PLY binary: invalid stride");
         const unsigned char* base = bytes.data() + pos;
+        size_t available = size - pos;
+        if (available < static_cast<size_t>(numVertices) * stride)
+            throw std::runtime_error("PLY binary data truncated: expected "
+                + std::to_string(static_cast<size_t>(numVertices) * stride)
+                + " bytes but only " + std::to_string(available) + " available");
 
         auto readFloat4 = [&](const unsigned char* src) -> float {
             float v; std::memcpy(&v, src, 4);

@@ -16,6 +16,7 @@ set(CMAKE_CXX_FLAGS_DEBUG   "-O0 -g")
 # Find dependencies
 find_package(OpenCV REQUIRED)
 find_package(PkgConfig REQUIRED)
+find_package(nlohmann_json 3.2.0 REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED
     libavformat
     libavcodec
@@ -53,4 +54,5 @@ target_include_directories(main PRIVATE
 target_link_libraries(main PRIVATE
     ${OpenCV_LIBS}
     ${FFMPEG_LIBRARIES}
+    nlohmann_json::nlohmann_json
 )
