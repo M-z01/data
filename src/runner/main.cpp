@@ -29,14 +29,22 @@ static ImageViewType inferViewType(const fs::path& src) {
     return ImageViewType::GENERIC;
 }
 
-static void testImage(const fs::path& src, const fs::path& dst) {
+static void testImage(const fs::path& src, const fs::path& dst,
+                      const fs::path& maskPath = {}) {
     std::cout << "[Image] Loading: " << src << "\n";
     auto img = ImageFactory::createImage(ImageSourceType::FILE, src.string());
     img->load();
 
     const ImageViewType viewType = inferViewType(src);
     DataInfo::printImageInfo(img, viewType);
-    DataVisualize::displayImage(img, viewType);
+
+    std::shared_ptr<Image> maskImg;
+    if (!maskPath.empty()) {
+        std::cout << "[Image] Mask: " << maskPath << "\n";
+        maskImg = ImageFactory::createImage(ImageSourceType::FILE, maskPath.string());
+        maskImg->load();
+    }
+    DataVisualize::displayImage(img, viewType, maskImg);
 
     if (!dst.empty()) {
         const std::string srcFmt = FormatDetector::imageFormat(src.string());
@@ -145,12 +153,29 @@ static void testVideoToImages(const fs::path& src, const fs::path& outDir) {
     std::cout << "[VideoToImages] Done — saved " << saved << " frame(s) to " << outDir << "\n";
 }
 
-static void testPointcloud(const fs::path& src, const fs::path& dst) {
+static void testPointcloud(const fs::path& src, const fs::path& dst,
+                           const fs::path& maskPath = {},
+                           const fs::path& rgbPath = {},
+                           const fs::path& depthPath = {}) {
     std::cout << "[Pointcloud] Loading: " << src << "\n";
     auto pc = PointcloudFactory::createPointcloud(PointcloudSourceType::FILE, src.string());
     pc->load();
     DataInfo::printPointsInfo(pc);
-    DataVisualize::displayPointcloud(pc);
+
+    std::shared_ptr<Image> maskImg, rgbImg, depthImg;
+    if (!maskPath.empty()) {
+        std::cout << "[Pointcloud] Mask: " << maskPath;
+        maskImg = ImageFactory::createImage(ImageSourceType::FILE, maskPath.string());
+        maskImg->load();
+        if (!rgbPath.empty() && !depthPath.empty()) {
+            std::cout << "  RGB: " << rgbPath << "  Depth: " << depthPath;
+            rgbImg   = ImageFactory::createImage(ImageSourceType::FILE, rgbPath.string());
+            depthImg = ImageFactory::createImage(ImageSourceType::FILE, depthPath.string());
+            rgbImg->load();  depthImg->load();
+        }
+        std::cout << "\n";
+    }
+    DataVisualize::displayPointcloud(pc, maskImg, rgbImg, depthImg);
 
     if (!dst.empty()) {
         const std::string srcFmt = FormatDetector::pointcloudFormat(src.string());
@@ -184,6 +209,45 @@ static void testVideo(const fs::path& src, const fs::path& dst) {
         }
         std::cout << "[Video] Saved to: " << dst << "\n";
     }
+}
+
+// images-to-pointcloud: back-project RGB-D pairs into a point cloud
+// Usage (dirs):  main images-to-pc <rgb_dir> <depth_dir> <output.pcd|ply> [seg_dir]
+// Usage (files): main images-to-pc <rgb.png> <depth.png> <output.pcd|ply> [mask.png]
+static void testImagesToPointcloud(const std::vector<fs::path>& rgbPaths,
+                                    const std::vector<fs::path>& depthPaths,
+                                    const fs::path& dst,
+                                    const std::vector<fs::path>& segPaths) {
+    if (rgbPaths.size() != depthPaths.size())
+        throw std::runtime_error(
+            "RGB/depth count mismatch: " + std::to_string(rgbPaths.size())
+            + " vs " + std::to_string(depthPaths.size()));
+
+    std::vector<std::shared_ptr<Image>> rgbs, depths, segs;
+    rgbs.reserve(rgbPaths.size());
+    depths.reserve(depthPaths.size());
+    for (const auto& p : rgbPaths)
+        rgbs.push_back(ImageFactory::createImage(ImageSourceType::FILE, p.string()));
+    for (const auto& p : depthPaths)
+        depths.push_back(ImageFactory::createImage(ImageSourceType::FILE, p.string()));
+
+    segs.reserve(segPaths.size());
+    for (const auto& p : segPaths)
+        segs.push_back(ImageFactory::createImage(ImageSourceType::FILE, p.string()));
+
+    // Infer output format from extension
+    std::string ext = dst.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
+    if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
+
+    std::cout << "[ImagesToPointcloud] " << rgbs.size() << " RGB-D pair(s), format=" << ext;
+    if (!segs.empty()) std::cout << ", " << segs.size() << " seg mask(s)";
+    std::cout << "\n";
+
+    auto pc = DataConverter::imagesToPointcloud(rgbs, depths, ext, segs);
+    DataInfo::printPointsInfo(pc);
+    pc->saveToFile(dst.string());
+    std::cout << "[ImagesToPointcloud] Saved to: " << dst << "\n";
 }
 
 // project-bbox: project 3D bounding boxes from metadata onto images or point clouds
@@ -318,11 +382,13 @@ static void testProjectBBox(int argc, char* argv[]) {
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage:\n"
-                  << "  " << argv[0] << " <input_path> [output_path]\n"
+                  << "  " << argv[0] << " <input_path> [output_path] [--mask <seg.png>] [--rgb <rgb.png>] [--depth <depth.png>]\n"
                   << "      Supported types: jpg, jpeg, png, exr, txt, csv, json, mp4, avi, mkv, pcd, ply\n"
+                  << "      --mask: overlay segmentation on image, or filter pointcloud with --rgb and --depth\n"
                   << "  " << argv[0] << " images-to-video  <input_dir> <output.mp4|avi|mkv> [fps=30]\n"
                   << "  " << argv[0] << " images-to-video  <output.mp4|avi|mkv> <fps> <img1> [img2 ...]\n"
                   << "  " << argv[0] << " video-to-images  <input_video> <output_dir>\n"
+                  << "  " << argv[0] << " images-to-pc     <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply> [seg_dir|mask.png]\n"
                   << "  " << argv[0] << " project-bbox     <meta.json> <image|ply> [output]\n"
                   << "  " << argv[0] << " project-bbox     <base_dir>\n";
         return 1;
@@ -333,6 +399,34 @@ int main(int argc, char* argv[]) {
     try {
         if (mode == "project-bbox" || mode == "project_bbox") {
             testProjectBBox(argc, argv);
+            return 0;
+        }
+
+        if (mode == "images-to-pointcloud" || mode == "images-to-pc") {
+            if (argc < 5) {
+                std::cerr << "Usage: " << argv[0]
+                          << " images-to-pc <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply> [seg_dir|mask.png]\n";
+                return 1;
+            }
+            const fs::path rgbArg   = argv[2];
+            const fs::path depthArg = argv[3];
+            const fs::path dst      = argv[4];
+            const fs::path segArg   = (argc >= 6) ? fs::path(argv[5]) : fs::path{};
+
+            std::vector<fs::path> rgbPaths, depthPaths, segPaths;
+            if (fs::is_directory(rgbArg)) {
+                rgbPaths   = collectImagesFromDir(rgbArg);
+                depthPaths = collectImagesFromDir(depthArg);
+                if (!segArg.empty() && fs::is_directory(segArg))
+                    segPaths = collectImagesFromDir(segArg);
+            } else {
+                // Single-file mode
+                rgbPaths   = { rgbArg };
+                depthPaths = { depthArg };
+                if (!segArg.empty() && fs::is_regular_file(segArg))
+                    segPaths = { segArg };
+            }
+            testImagesToPointcloud(rgbPaths, depthPaths, dst, segPaths);
             return 0;
         }
 
@@ -388,8 +482,27 @@ int main(int argc, char* argv[]) {
         }
 
         // --- original single-file mode ---
-        const fs::path src = argv[1];
-        const fs::path dst = (argc >= 3) ? fs::path(argv[2]) : fs::path{};
+        // Scan for --mask, --rgb, --depth flags
+        fs::path maskPath, rgbPath, depthPath, src, dst;
+        std::vector<std::string> positionalArgs;
+        for (int i = 1; i < argc; ++i) {
+            std::string arg = argv[i];
+            if (arg == "--mask" && i + 1 < argc) {
+                maskPath = argv[++i];
+            } else if (arg == "--rgb" && i + 1 < argc) {
+                rgbPath = argv[++i];
+            } else if (arg == "--depth" && i + 1 < argc) {
+                depthPath = argv[++i];
+            } else {
+                positionalArgs.push_back(arg);
+            }
+        }
+        if (positionalArgs.empty()) {
+            std::cerr << "Error: no input file specified\n";
+            return 1;
+        }
+        src = positionalArgs[0];
+        if (positionalArgs.size() >= 2) dst = positionalArgs[1];
 
         if (!fs::exists(src)) {
             std::cerr << "Error: file not found: " << src << "\n";
@@ -398,13 +511,13 @@ int main(int argc, char* argv[]) {
 
         const std::string type = FormatDetector::detectType(src.string());
         if (type == "image") {
-            testImage(src, dst);
+            testImage(src, dst, maskPath);
         } else if (type == "text") {
             testText(src, dst);
         } else if (type == "video") {
             testVideo(src, dst);
         } else if (type == "pointcloud") {
-            testPointcloud(src, dst);
+            testPointcloud(src, dst, maskPath, rgbPath, depthPath);
         } else {
             std::cerr << "Unsupported file extension: " << src.extension() << "\n";
             return 1;

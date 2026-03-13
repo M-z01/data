@@ -54,7 +54,8 @@ public:
     static std::shared_ptr<Pointcloud> imagesToPointcloud(
         const std::vector<std::shared_ptr<Image>>& rgbs,    // RGB images
         const std::vector<std::shared_ptr<Image>>& depths,  // depth maps aligned with RGBs
-        const std::vector<std::shared_ptr<Image>>& segs     // masks for segmentation, optional
+        const std::string& targetFormat,
+        const std::vector<std::shared_ptr<Image>>& segs = {} // masks for segmentation, optional
     );
     
 };

@@ -623,8 +623,128 @@ std::shared_ptr<Pointcloud> DataConverter::convertPointcloudFormat(
 std::shared_ptr<Pointcloud> DataConverter::imagesToPointcloud(
     const std::vector<std::shared_ptr<Image>>& rgbs,
     const std::vector<std::shared_ptr<Image>>& depths,
+    const std::string& targetFormat,
     const std::vector<std::shared_ptr<Image>>& segs
 ) {
-    // TODO: implement
-    throw std::runtime_error("imagesToPointcloud not yet implemented");
+    if (rgbs.empty())
+        throw std::runtime_error("imagesToPointcloud: no RGB images provided");
+
+    // ------------------------------------------------------------------
+    // Multi-view / stereo path (multiple RGBs, no depth maps)
+    // ------------------------------------------------------------------
+    if (depths.empty()) {
+        // TODO: implement multi-view / stereo reconstruction
+        throw std::runtime_error(
+            "imagesToPointcloud: multi-view reconstruction from multiple "
+            "RGB images is not yet implemented. Provide aligned depth maps.");
+    }
+
+    // ------------------------------------------------------------------
+    // RGB-D path: back-project each pixel using a pinhole camera model
+    // ------------------------------------------------------------------
+    if (rgbs.size() != depths.size())
+        throw std::runtime_error(
+            "imagesToPointcloud: rgb / depth count mismatch ("
+            + std::to_string(rgbs.size()) + " vs "
+            + std::to_string(depths.size()) + ")");
+
+    const bool useMask = !segs.empty();
+    if (useMask && segs.size() != rgbs.size())
+        throw std::runtime_error(
+            "imagesToPointcloud: seg mask count mismatch ("
+            + std::to_string(segs.size()) + " vs "
+            + std::to_string(rgbs.size()) + ")");
+
+    const PointcloudFormat fmt = pointcloudFormatFromString(toUpper(targetFormat));
+
+    std::vector<float>   allPoints;
+    std::vector<uint8_t> allColors;
+
+    for (std::size_t i = 0; i < rgbs.size(); ++i) {
+        // Ensure images are loaded
+        if (rgbs[i]->getImage().empty())   rgbs[i]->load();
+        if (depths[i]->getImage().empty()) depths[i]->load();
+
+        cv::Mat rgb   = OpenCVBridge::bufferToMat(rgbs[i]->getImage());
+        cv::Mat depth = OpenCVBridge::bufferToMat(depths[i]->getImage());
+
+        if (rgb.rows != depth.rows || rgb.cols != depth.cols)
+            throw std::runtime_error(
+                "imagesToPointcloud: RGB/depth dimension mismatch at index "
+                + std::to_string(i));
+
+        // Convert RGB to 8-bit BGR (OpenCV default) if needed
+        if (rgb.depth() != CV_8U)
+            rgb.convertTo(rgb, CV_8U,
+                rgb.depth() == CV_16U ? 1.0 / 256.0 : 255.0);
+
+        // Convert depth to 32-bit float (metres)
+        cv::Mat depthF;
+        if (depth.depth() == CV_32F) {
+            depthF = depth;
+        } else if (depth.depth() == CV_16U) {
+            // Common convention: 16-bit depth in millimetres
+            depth.convertTo(depthF, CV_32F, 1.0 / 1000.0);
+        } else if (depth.depth() == CV_8U) {
+            depth.convertTo(depthF, CV_32F);
+        } else {
+            depth.convertTo(depthF, CV_32F);
+        }
+        // Use first channel only if multi-channel
+        if (depthF.channels() > 1) {
+            std::vector<cv::Mat> ch;
+            cv::split(depthF, ch);
+            depthF = ch[0];
+        }
+
+        // Optional segmentation mask – float-based, 1.0 = background
+        cv::Mat maskF;
+        if (useMask) {
+            if (segs[i]->getImage().empty()) segs[i]->load();
+            cv::Mat rawMask = OpenCVBridge::bufferToMat(segs[i]->getImage());
+            maskF = OpenCVBridge::toFloat1ch(rawMask);
+        }
+
+        const int w = rgb.cols;
+        const int h = rgb.rows;
+
+        // Default pinhole intrinsics: focal length = image width,
+        // principal point at image centre.
+        const float fx = static_cast<float>(w);
+        const float fy = static_cast<float>(w);
+        const float cx = static_cast<float>(w) * 0.5f;
+        const float cy = static_cast<float>(h) * 0.5f;
+
+        for (int v = 0; v < h; ++v) {
+            const float* dRow = depthF.ptr<float>(v);
+            const float* mRow = useMask ? maskF.ptr<float>(v) : nullptr;
+            for (int u = 0; u < w; ++u) {
+                // Keep only foreground (masked) pixels; 1.0 = background
+                if (mRow && mRow[u] == 1.0f) continue;
+
+                const float z = dRow[u];
+                if (z <= 0.0f || !std::isfinite(z)) continue;
+
+                const float x = (static_cast<float>(u) - cx) * z / fx;
+                const float y = (static_cast<float>(v) - cy) * z / fy;
+
+                allPoints.push_back(x);
+                allPoints.push_back(y);
+                allPoints.push_back(z);
+
+                // BGR → RGB
+                const cv::Vec3b& bgr = rgb.at<cv::Vec3b>(v, u);
+                allColors.push_back(bgr[2]); // R
+                allColors.push_back(bgr[1]); // G
+                allColors.push_back(bgr[0]); // B
+            }
+        }
+    }
+
+    auto memSrc    = std::make_shared<MemoryDataSource>(std::vector<unsigned char>{});
+    auto converted = std::make_shared<Pointcloud>(memSrc, fmt);
+    converted->setPoints(std::move(allPoints));
+    if (!allColors.empty())
+        converted->setColors(std::move(allColors), /*alpha=*/false);
+    return converted;
 }

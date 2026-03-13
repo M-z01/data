@@ -156,9 +156,71 @@ static FrameMeta parseMetaJson(const std::string& jsonStr) {
 // ── public methods ────────────────────────────────────────────────────────────
 
 //Image
-void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewType type) {
+void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewType type,
+                                  const std::shared_ptr<Image>& mask) {
     const ImageBuffer& buf = img->getImage();
     cv::Mat mat = OpenCVBridge::bufferToMat(buf);
+
+    // ── If a segmentation mask is provided, overlay it on the image ──────────
+    if (mask) {
+        if (mask->getImage().empty()) mask->load();
+        cv::Mat maskF = OpenCVBridge::toFloat1ch(
+            OpenCVBridge::bufferToMat(mask->getImage()));
+        auto float_to_id = OpenCVBridge::buildFloatToId(maskF);
+
+        // Build colour map for each segment (background 1.0 → transparent)
+        cv::RNG rng(42);
+        std::map<float, cv::Vec3b> float_to_color;
+        for (const auto& [val, uid] : float_to_id) {
+            if (val == 1.0f) continue; // skip background
+            float_to_color[val] = cv::Vec3b(rng.uniform(0, 255),
+                                             rng.uniform(0, 255),
+                                             rng.uniform(0, 255));
+        }
+
+        // Prepare base image as 8-bit BGR
+        cv::Mat display;
+        if (mat.channels() == 1) cv::cvtColor(mat, display, cv::COLOR_GRAY2BGR);
+        else                     display = mat.clone();
+        if (display.depth() != CV_8U) {
+            cv::Mat tmp;
+            cv::normalize(display, tmp, 0, 255, cv::NORM_MINMAX, CV_8U);
+            display = tmp;
+        }
+
+        // Blend segmentation colour overlay onto foreground pixels
+        cv::Mat overlay = display.clone();
+        for (int r = 0; r < maskF.rows && r < display.rows; ++r) {
+            const float* mRow = maskF.ptr<float>(r);
+            cv::Vec3b*   oRow = overlay.ptr<cv::Vec3b>(r);
+            for (int c = 0; c < maskF.cols && c < display.cols; ++c) {
+                auto it = float_to_color.find(mRow[c]);
+                if (it != float_to_color.end())
+                    oRow[c] = it->second;
+            }
+        }
+        cv::addWeighted(overlay, 0.4, display, 0.6, 0, display);
+
+        // Draw UID labels at centroids
+        for (const auto& [val, uid] : float_to_id) {
+            if (val == 1.0f) continue;
+            cv::Mat bin;
+            cv::compare(maskF, val, bin, cv::CMP_EQ);
+            cv::Moments m = cv::moments(bin, true);
+            if (m.m00 > 0) {
+                int cx = static_cast<int>(m.m10 / m.m00);
+                int cy = static_cast<int>(m.m01 / m.m00);
+                cv::putText(display, std::to_string(uid),
+                            cv::Point(cx, cy),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                            cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+            }
+        }
+
+        cv::imshow("Image + Segmentation", display);
+        cv::waitKey(0);
+        return;
+    }
 
     if (type == ImageViewType::MASK) {
         cv::Mat f = OpenCVBridge::toFloat1ch(mat);
@@ -229,7 +291,196 @@ void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewTyp
     }
 }
 
-void DataVisualize::displayPointcloud(const std::shared_ptr<Pointcloud>& pc) {
+void DataVisualize::displayPointcloud(const std::shared_ptr<Pointcloud>& pc,
+                                       const std::shared_ptr<Image>& mask,
+                                       const std::shared_ptr<Image>& rgb,
+                                       const std::shared_ptr<Image>& depth) {
+    // ── If mask is given, filter points using the segmentation mask ──────────
+    if (mask) {
+        if (mask->getImage().empty()) mask->load();
+        cv::Mat maskF = OpenCVBridge::toFloat1ch(
+            OpenCVBridge::bufferToMat(mask->getImage()));
+
+        // Build per-segment colour map (background 1.0 → skip)
+        auto float_to_id = OpenCVBridge::buildFloatToId(maskF);
+        cv::RNG rng(42);
+        std::map<float, cv::Vec3b> seg_color;
+        for (const auto& [val, uid] : float_to_id) {
+            if (val == 1.0f) continue;
+            seg_color[val] = cv::Vec3b(rng.uniform(0, 255),
+                                        rng.uniform(0, 255),
+                                        rng.uniform(0, 255));
+        }
+
+        // ── If rgb + depth are also given, back-project from images ──────
+        if (rgb && depth) {
+            if (rgb->getImage().empty())   rgb->load();
+            if (depth->getImage().empty()) depth->load();
+
+            cv::Mat rgbMat = OpenCVBridge::bufferToMat(rgb->getImage());
+            cv::Mat depthMat = OpenCVBridge::bufferToMat(depth->getImage());
+
+            if (rgbMat.depth() != CV_8U)
+                rgbMat.convertTo(rgbMat, CV_8U,
+                    rgbMat.depth() == CV_16U ? 1.0 / 256.0 : 255.0);
+
+            cv::Mat depthF;
+            if (depthMat.depth() == CV_32F)      depthF = depthMat;
+            else if (depthMat.depth() == CV_16U) depthMat.convertTo(depthF, CV_32F, 1.0 / 1000.0);
+            else                                 depthMat.convertTo(depthF, CV_32F);
+            if (depthF.channels() > 1) {
+                std::vector<cv::Mat> ch; cv::split(depthF, ch); depthF = ch[0];
+            }
+
+            const int w = rgbMat.cols;
+            const int h = rgbMat.rows;
+            const float fx = static_cast<float>(w);
+            const float fy = static_cast<float>(w);
+            const float cx = static_cast<float>(w) * 0.5f;
+            const float cy = static_cast<float>(h) * 0.5f;
+
+            std::vector<cv::Vec3f> filteredPts;
+            std::vector<cv::Vec3b> filteredCols;
+
+            for (int v = 0; v < h; ++v) {
+                const float* mRow = maskF.ptr<float>(v);
+                const float* dRow = depthF.ptr<float>(v);
+                for (int u = 0; u < w; ++u) {
+                    if (mRow[u] == 1.0f) continue;
+                    const float z = dRow[u];
+                    if (z <= 0.0f || !std::isfinite(z)) continue;
+
+                    const float x = (static_cast<float>(u) - cx) * z / fx;
+                    const float y = (static_cast<float>(v) - cy) * z / fy;
+                    filteredPts.push_back(cv::Vec3f(x, y, z));
+
+                    auto it = seg_color.find(mRow[u]);
+                    if (it != seg_color.end()) {
+                        const cv::Vec3b& bgr = rgbMat.at<cv::Vec3b>(v, u);
+                        cv::Vec3b blended(
+                            static_cast<uint8_t>(bgr[0] * 0.5 + it->second[0] * 0.5),
+                            static_cast<uint8_t>(bgr[1] * 0.5 + it->second[1] * 0.5),
+                            static_cast<uint8_t>(bgr[2] * 0.5 + it->second[2] * 0.5));
+                        filteredCols.push_back(blended);
+                    } else {
+                        filteredCols.push_back(rgbMat.at<cv::Vec3b>(v, u));
+                    }
+                }
+            }
+
+            if (filteredPts.empty()) {
+                std::cerr << "[displayPointcloud] No foreground points after mask filtering.\n";
+                return;
+            }
+
+            cv::Mat cloud(1, static_cast<int>(filteredPts.size()), CV_32FC3,
+                          filteredPts.data());
+            cv::Mat colors(1, static_cast<int>(filteredCols.size()), CV_8UC3,
+                           filteredCols.data());
+
+            cv::viz::Viz3d viewer("Segmented Point Cloud");
+            viewer.setBackgroundColor(cv::viz::Color::black());
+            cv::viz::WCloud cloudWidget(cloud, colors);
+            cloudWidget.setRenderingProperty(cv::viz::POINT_SIZE, 2.0);
+            viewer.showWidget("cloud", cloudWidget);
+
+            double minV, maxV;
+            cv::minMaxLoc(cloud.reshape(1), &minV, &maxV);
+            double axisSize = std::max(0.05, (maxV - minV) * 0.1);
+            viewer.showWidget("axes", cv::viz::WCoordinateSystem(axisSize));
+
+            std::cout << "[displayPointcloud] Showing " << filteredPts.size()
+                      << " segmented points (from RGB-D). Close the window to continue.\n";
+            viewer.spin();
+            return;
+        }
+
+        // ── Mask-only: project existing 3D points onto the mask image ────
+        const auto& pts = pc->getPoints();
+        const size_t nPts = pts.size() / 3;
+        if (nPts == 0) {
+            std::cerr << "[displayPointcloud] Empty point cloud, nothing to show.\n";
+            return;
+        }
+
+        const int mW = maskF.cols;
+        const int mH = maskF.rows;
+        const float fx = static_cast<float>(mW);
+        const float fy = static_cast<float>(mW);
+        const float cx = static_cast<float>(mW) * 0.5f;
+        const float cy = static_cast<float>(mH) * 0.5f;
+
+        // Existing colours (if any)
+        const bool hasCols = pc->hasColors();
+        const auto& colData = pc->getColors();
+        const int cStride = pc->hasAlpha() ? 4 : 3;
+
+        std::vector<cv::Vec3f> filteredPts;
+        std::vector<cv::Vec3b> filteredCols;
+
+        for (size_t i = 0; i < nPts; ++i) {
+            float x = pts[i * 3 + 0];
+            float y = pts[i * 3 + 1];
+            float z = pts[i * 3 + 2];
+            if (z <= 0.0f || !std::isfinite(z)) continue;
+
+            // Project 3D → 2D pixel
+            int u = static_cast<int>(fx * x / z + cx);
+            int v = static_cast<int>(fy * y / z + cy);
+            if (u < 0 || u >= mW || v < 0 || v >= mH) continue;
+
+            float mVal = maskF.at<float>(v, u);
+            if (mVal == 1.0f) continue; // background
+
+            filteredPts.push_back(cv::Vec3f(x, y, z));
+
+            // Blend existing colour with segment colour
+            cv::Vec3b baseCol(255, 255, 255);
+            if (hasCols) {
+                // Stored as RGB, viz expects BGR
+                baseCol = cv::Vec3b(colData[i * cStride + 2],
+                                    colData[i * cStride + 1],
+                                    colData[i * cStride + 0]);
+            }
+            auto it = seg_color.find(mVal);
+            if (it != seg_color.end()) {
+                cv::Vec3b blended(
+                    static_cast<uint8_t>(baseCol[0] * 0.5 + it->second[0] * 0.5),
+                    static_cast<uint8_t>(baseCol[1] * 0.5 + it->second[1] * 0.5),
+                    static_cast<uint8_t>(baseCol[2] * 0.5 + it->second[2] * 0.5));
+                filteredCols.push_back(blended);
+            } else {
+                filteredCols.push_back(baseCol);
+            }
+        }
+
+        if (filteredPts.empty()) {
+            std::cerr << "[displayPointcloud] No foreground points after mask filtering.\n";
+            return;
+        }
+
+        cv::Mat cloud(1, static_cast<int>(filteredPts.size()), CV_32FC3,
+                      filteredPts.data());
+        cv::Mat colors(1, static_cast<int>(filteredCols.size()), CV_8UC3,
+                       filteredCols.data());
+
+        cv::viz::Viz3d viewer("Segmented Point Cloud");
+        viewer.setBackgroundColor(cv::viz::Color::black());
+        cv::viz::WCloud cloudWidget(cloud, colors);
+        cloudWidget.setRenderingProperty(cv::viz::POINT_SIZE, 2.0);
+        viewer.showWidget("cloud", cloudWidget);
+
+        double minV, maxV;
+        cv::minMaxLoc(cloud.reshape(1), &minV, &maxV);
+        double axisSize = std::max(0.05, (maxV - minV) * 0.1);
+        viewer.showWidget("axes", cv::viz::WCoordinateSystem(axisSize));
+
+        std::cout << "[displayPointcloud] Showing " << filteredPts.size()
+                  << " segmented points (of " << nPts << " total). Close the window to continue.\n";
+        viewer.spin();
+        return;
+    }
+
     const auto& pts  = pc->getPoints();
     const size_t nPts = pts.size() / 3;
     if (nPts == 0) {
