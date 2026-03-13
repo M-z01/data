@@ -212,11 +212,12 @@ static void testVideo(const fs::path& src, const fs::path& dst) {
 }
 
 // images-to-pointcloud: back-project RGB-D pairs into a point cloud
-// Usage (dirs):  main images-to-pc <rgb_dir> <depth_dir> <output.pcd|ply> [seg_dir]
-// Usage (files): main images-to-pc <rgb.png> <depth.png> <output.pcd|ply> [mask.png]
+// Usage (dirs):  main images-to-pc <rgb_dir> <depth_dir> <output.pcd|ply> --intrinsics <calib.json> [seg_dir]
+// Usage (files): main images-to-pc <rgb.png> <depth.png> <output.pcd|ply> --intrinsics <calib.json> [mask.png]
 static void testImagesToPointcloud(const std::vector<fs::path>& rgbPaths,
                                     const std::vector<fs::path>& depthPaths,
                                     const fs::path& dst,
+                                    const std::string& intrinsicsPath,
                                     const std::vector<fs::path>& segPaths) {
     if (rgbPaths.size() != depthPaths.size())
         throw std::runtime_error(
@@ -240,11 +241,12 @@ static void testImagesToPointcloud(const std::vector<fs::path>& rgbPaths,
     std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
     if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
 
-    std::cout << "[ImagesToPointcloud] " << rgbs.size() << " RGB-D pair(s), format=" << ext;
+    std::cout << "[ImagesToPointcloud] " << rgbs.size() << " RGB-D pair(s), format=" << ext
+              << ", intrinsics=" << intrinsicsPath;
     if (!segs.empty()) std::cout << ", " << segs.size() << " seg mask(s)";
     std::cout << "\n";
 
-    auto pc = DataConverter::imagesToPointcloud(rgbs, depths, ext, segs);
+    auto pc = DataConverter::imagesToPointcloud(rgbs, depths, ext, intrinsicsPath, segs);
     DataInfo::printPointsInfo(pc);
     pc->saveToFile(dst.string());
     std::cout << "[ImagesToPointcloud] Saved to: " << dst << "\n";
@@ -388,7 +390,7 @@ int main(int argc, char* argv[]) {
                   << "  " << argv[0] << " images-to-video  <input_dir> <output.mp4|avi|mkv> [fps=30]\n"
                   << "  " << argv[0] << " images-to-video  <output.mp4|avi|mkv> <fps> <img1> [img2 ...]\n"
                   << "  " << argv[0] << " video-to-images  <input_video> <output_dir>\n"
-                  << "  " << argv[0] << " images-to-pc     <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply> [seg_dir|mask.png]\n"
+                  << "  " << argv[0] << " images-to-pc     <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply> --intrinsics <calib.json> [seg_dir|mask.png]\n"
                   << "  " << argv[0] << " project-bbox     <meta.json> <image|ply> [output]\n"
                   << "  " << argv[0] << " project-bbox     <base_dir>\n";
         return 1;
@@ -403,15 +405,31 @@ int main(int argc, char* argv[]) {
         }
 
         if (mode == "images-to-pointcloud" || mode == "images-to-pc") {
-            if (argc < 5) {
+            if (argc < 7) {
                 std::cerr << "Usage: " << argv[0]
-                          << " images-to-pc <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply> [seg_dir|mask.png]\n";
+                          << " images-to-pc <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply>"
+                          << " --intrinsics <calib.json> [seg_dir|mask.png]\n";
                 return 1;
             }
             const fs::path rgbArg   = argv[2];
             const fs::path depthArg = argv[3];
             const fs::path dst      = argv[4];
-            const fs::path segArg   = (argc >= 6) ? fs::path(argv[5]) : fs::path{};
+
+            // Parse required --intrinsics flag and optional positional seg arg
+            std::string intrinsicsPath;
+            fs::path segArg;
+            for (int i = 5; i < argc; ++i) {
+                std::string a = argv[i];
+                if (a == "--intrinsics" && i + 1 < argc) {
+                    intrinsicsPath = argv[++i];
+                } else if (segArg.empty()) {
+                    segArg = a;
+                }
+            }
+            if (intrinsicsPath.empty()) {
+                std::cerr << "Error: --intrinsics <calib.json> is required for images-to-pc\n";
+                return 1;
+            }
 
             std::vector<fs::path> rgbPaths, depthPaths, segPaths;
             if (fs::is_directory(rgbArg)) {
@@ -426,7 +444,7 @@ int main(int argc, char* argv[]) {
                 if (!segArg.empty() && fs::is_regular_file(segArg))
                     segPaths = { segArg };
             }
-            testImagesToPointcloud(rgbPaths, depthPaths, dst, segPaths);
+            testImagesToPointcloud(rgbPaths, depthPaths, dst, intrinsicsPath, segPaths);
             return 0;
         }
 

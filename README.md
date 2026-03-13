@@ -54,12 +54,6 @@ Format conversion happens automatically when input and output extensions differ.
 # Overlay segmentation mask on an image (foreground = non-1.0 pixels)
 ./build/main <image> --mask <seg.png|exr>
 
-# Overlay segmentation mask on an image and save the result
-./build/main <image> <output> --mask <seg.png|exr>
-
-# Visualize segmented point cloud (keeps only foreground points)
-./build/main <pointcloud> --mask <seg.png|exr>
-
 # Optionally provide RGB + depth to back-project from images instead
 ./build/main <pointcloud> --mask <seg.png|exr> --rgb <rgb.png> --depth <depth.png|exr>
 ```
@@ -85,13 +79,26 @@ Format conversion happens automatically when input and output extensions differ.
 
 ```bash
 # From directories of aligned RGB + depth images
-./build/main images-to-pc <rgb_dir> <depth_dir> <output.pcd|ply> [seg_dir]
+./build/main images-to-pc <rgb_dir> <depth_dir> <output.pcd|ply> --intrinsics <calib.json> [seg_dir]
 
 # From single files
-./build/main images-to-pc <rgb.png> <depth.png|exr> <output.pcd|ply> [mask.png|exr]
+./build/main images-to-pc <rgb.png> <depth.png|exr> <output.pcd|ply> --intrinsics <calib.json> [mask.png|exr]
 ```
 
 Segmentation masks are optional. When provided, only foreground pixels (mask value ≠ 1.0) are back-projected into the point cloud.
+
+Camera intrinsics are required via `--intrinsics <calib.json>`. The JSON file supports these layouts:
+
+```jsonc
+// Flat keys
+{ "fx": 525.0, "fy": 525.0, "cx": 319.5, "cy": 239.5 }
+
+// Nested under "color"
+{ "color": { "fx": 525.0, "fy": 525.0, "cx": 319.5, "cy": 239.5 } }
+
+// 3×3 row-major matrix under "K" or "intrinsic_matrix"
+{ "K": [525.0, 0, 319.5, 0, 525.0, 239.5, 0, 0, 1] }
+```
 
 ### 3D Bounding-Box Projection
 

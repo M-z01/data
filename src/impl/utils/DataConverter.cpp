@@ -3,10 +3,12 @@
 #include "utils/OpenCVBridge.h"
 #include "utils/FFmpegDeleter.h"
 #include <opencv2/opencv.hpp>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <fstream>
 #include <filesystem>
 
 extern "C" {
@@ -624,10 +626,13 @@ std::shared_ptr<Pointcloud> DataConverter::imagesToPointcloud(
     const std::vector<std::shared_ptr<Image>>& rgbs,
     const std::vector<std::shared_ptr<Image>>& depths,
     const std::string& targetFormat,
+    const std::string& intrinsicsPath,
     const std::vector<std::shared_ptr<Image>>& segs
 ) {
     if (rgbs.empty())
         throw std::runtime_error("imagesToPointcloud: no RGB images provided");
+    if (intrinsicsPath.empty())
+        throw std::runtime_error("imagesToPointcloud: intrinsics JSON path is required");
 
     // ------------------------------------------------------------------
     // Multi-view / stereo path (multiple RGBs, no depth maps)
@@ -659,6 +664,9 @@ std::shared_ptr<Pointcloud> DataConverter::imagesToPointcloud(
 
     std::vector<float>   allPoints;
     std::vector<uint8_t> allColors;
+
+    // Intrinsics parsed once on the first iteration
+    float camFx = 0, camFy = 0, camCx = 0, camCy = 0;
 
     for (std::size_t i = 0; i < rgbs.size(); ++i) {
         // Ensure images are loaded
@@ -708,12 +716,52 @@ std::shared_ptr<Pointcloud> DataConverter::imagesToPointcloud(
         const int w = rgb.cols;
         const int h = rgb.rows;
 
-        // Default pinhole intrinsics: focal length = image width,
-        // principal point at image centre.
-        const float fx = static_cast<float>(w);
-        const float fy = static_cast<float>(w);
-        const float cx = static_cast<float>(w) * 0.5f;
-        const float cy = static_cast<float>(h) * 0.5f;
+        // Camera intrinsics – loaded from the required JSON file.
+        // Parse once on the first iteration (values are reused for all frames).
+        // We declare them outside the if-guard so they persist across iterations.
+        if (i == 0) {
+            std::ifstream ifs(intrinsicsPath);
+            if (!ifs.is_open())
+                throw std::runtime_error(
+                    "imagesToPointcloud: cannot open intrinsics file: " + intrinsicsPath);
+            nlohmann::json j;
+            ifs >> j;
+
+            // If the file wraps intrinsics under a "color" key, unwrap it.
+            if (j.contains("color") && j["color"].is_object())
+                j = j["color"];
+
+            // Support three layouts:
+            //  1) flat keys: { "fx": ..., "fy": ..., "cx": ..., "cy": ... }
+            //  2) nested under "color": { "color": { "fx": ... } }   (unwrapped above)
+            //  3) 3×3 row-major matrix under "K" or "intrinsic_matrix":
+            //     [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+            if (j.contains("fx") && j.contains("fy") &&
+                j.contains("cx") && j.contains("cy")) {
+                camFx = j["fx"].get<float>();
+                camFy = j["fy"].get<float>();
+                camCx = j["cx"].get<float>();
+                camCy = j["cy"].get<float>();
+            } else {
+                const char* matKey = j.contains("K") ? "K"
+                                   : j.contains("intrinsic_matrix") ? "intrinsic_matrix"
+                                   : nullptr;
+                if (!matKey)
+                    throw std::runtime_error(
+                        "imagesToPointcloud: intrinsics JSON must contain "
+                        "{fx,fy,cx,cy} or a \"K\"/\"intrinsic_matrix\" array");
+                auto arr = j[matKey].get<std::vector<float>>();
+                if (arr.size() < 9)
+                    throw std::runtime_error(
+                        "imagesToPointcloud: intrinsic matrix must have ≥ 9 elements");
+                camFx = arr[0]; camFy = arr[4];
+                camCx = arr[2]; camCy = arr[5];
+            }
+        }
+        const float fx = camFx;
+        const float fy = camFy;
+        const float cx = camCx;
+        const float cy = camCy;
 
         for (int v = 0; v < h; ++v) {
             const float* dRow = depthF.ptr<float>(v);

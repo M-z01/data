@@ -51,10 +51,16 @@ public:
     );
 
     // RGBD -> Pointcloud or Stereo -> Pointcloud conversion
+    // intrinsicsPath: path to a JSON file containing camera intrinsics (required).
+    //   Supported layouts:
+    //     { "fx": ..., "fy": ..., "cx": ..., "cy": ... }
+    //     { "color": { "fx": ..., "fy": ..., "cx": ..., "cy": ... } }
+    //     { "K": [fx, 0, cx, 0, fy, cy, 0, 0, 1] }  (or "intrinsic_matrix")
     static std::shared_ptr<Pointcloud> imagesToPointcloud(
         const std::vector<std::shared_ptr<Image>>& rgbs,    // RGB images
         const std::vector<std::shared_ptr<Image>>& depths,  // depth maps aligned with RGBs
         const std::string& targetFormat,
+        const std::string& intrinsicsPath,                   // camera intrinsics JSON (required)
         const std::vector<std::shared_ptr<Image>>& segs = {} // masks for segmentation, optional
     );
     
