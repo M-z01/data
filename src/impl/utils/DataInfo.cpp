@@ -1,7 +1,6 @@
 #include "utils/DataInfo.h"
 #include "utils/OpenCVBridge.h"
 #include <iostream>
-#include <opencv2/opencv.hpp>
 
 //Image
 void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType type) {

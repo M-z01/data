@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cctype>
 
-#include <opencv2/opencv.hpp>
 #include "utils/OpenCVBridge.h"
 #include "utils/FormatDetector.h"
 #include "loaders/ImageFactory.h"

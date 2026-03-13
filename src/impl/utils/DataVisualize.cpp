@@ -3,7 +3,6 @@
 #include <iostream>
 #include <cmath>
 #include <array>
-#include <opencv2/opencv.hpp>
 #include <opencv2/viz.hpp>
 #include <nlohmann/json.hpp>
 

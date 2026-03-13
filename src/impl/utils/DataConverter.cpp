@@ -2,7 +2,6 @@
 #include "datasource/MemoryDataSource.h"
 #include "utils/OpenCVBridge.h"
 #include "utils/FFmpegDeleter.h"
-#include <opencv2/opencv.hpp>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <algorithm>
