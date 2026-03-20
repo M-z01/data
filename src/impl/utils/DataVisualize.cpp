@@ -152,6 +152,85 @@ static FrameMeta parseMetaJson(const std::string& jsonStr) {
     return fm;
 }
 
+// ── mouse-click callback for pixel inspection ───────────────────────────────
+namespace {
+
+enum class ClickMode { GENERIC, DEPTH, MASK, SEGMENTATION };
+
+struct ClickData {
+    ClickMode                   mode;
+    cv::Mat                     rawMat;    // primary data (float for DEPTH/MASK, raw for GENERIC)
+    cv::Mat                     auxMat;    // original BGR display (used by SEGMENTATION)
+    const std::map<float, int>* floatToId; // for MASK & SEGMENTATION
+};
+
+static void onMouseClick(int event, int x, int y, int /*flags*/, void* userdata) {
+    if (event != cv::EVENT_LBUTTONDOWN) return;
+    auto* d = static_cast<ClickData*>(userdata);
+    if (!d || x < 0 || y < 0 || x >= d->rawMat.cols || y >= d->rawMat.rows) return;
+    std::cout << "[Click] (" << x << ", " << y << ")  ";
+    switch (d->mode) {
+    case ClickMode::DEPTH:
+        std::cout << "depth = " << d->rawMat.at<float>(y, x) << "\n";
+        break;
+    case ClickMode::MASK: {
+        float val = d->rawMat.at<float>(y, x);
+        std::cout << "mask_value = " << val;
+        if (d->floatToId) {
+            auto it = d->floatToId->find(val);
+            if (it != d->floatToId->end())
+                std::cout << "  uid = " << it->second;
+        }
+        std::cout << "\n";
+        break;
+    }
+    case ClickMode::SEGMENTATION: {
+        float mval = d->rawMat.at<float>(y, x);
+        std::cout << "mask_value = " << mval;
+        if (d->floatToId) {
+            auto it = d->floatToId->find(mval);
+            if (it != d->floatToId->end())
+                std::cout << "  uid = " << it->second;
+        }
+        if (!d->auxMat.empty() && y < d->auxMat.rows && x < d->auxMat.cols
+                && d->auxMat.channels() == 3 && d->auxMat.depth() == CV_8U) {
+            cv::Vec3b px = d->auxMat.at<cv::Vec3b>(y, x);
+            std::cout << "  BGR = (" << (int)px[0] << ", " << (int)px[1] << ", " << (int)px[2] << ")";
+        }
+        std::cout << "\n";
+        break;
+    }
+    default: { // GENERIC
+        int ch  = d->rawMat.channels();
+        int dep = d->rawMat.depth();
+        if (ch == 1) {
+            if      (dep == CV_32F)  std::cout << "value = " << d->rawMat.at<float>(y, x);
+            else if (dep == CV_16U)  std::cout << "value = " << d->rawMat.at<uint16_t>(y, x);
+            else                     std::cout << "value = " << (int)d->rawMat.at<uint8_t>(y, x);
+        } else if (ch == 3) {
+            if (dep == CV_8U) {
+                cv::Vec3b px = d->rawMat.at<cv::Vec3b>(y, x);
+                std::cout << "BGR = (" << (int)px[0] << ", " << (int)px[1] << ", " << (int)px[2] << ")";
+            } else if (dep == CV_32F) {
+                cv::Vec3f px = d->rawMat.at<cv::Vec3f>(y, x);
+                std::cout << "BGR = (" << px[0] << ", " << px[1] << ", " << px[2] << ")";
+            } else if (dep == CV_16U) {
+                cv::Vec3w px = d->rawMat.at<cv::Vec3w>(y, x);
+                std::cout << "BGR = (" << px[0] << ", " << px[1] << ", " << px[2] << ")";
+            }
+        } else if (ch == 4 && dep == CV_8U) {
+            cv::Vec4b px = d->rawMat.at<cv::Vec4b>(y, x);
+            std::cout << "BGRA = (" << (int)px[0] << ", " << (int)px[1] << ", "
+                      << (int)px[2] << ", " << (int)px[3] << ")";
+        }
+        std::cout << "\n";
+        break;
+    }
+    }
+}
+
+} // anonymous namespace
+
 // ── public methods ────────────────────────────────────────────────────────────
 
 //Image
@@ -217,7 +296,10 @@ void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewTyp
         }
 
         cv::imshow("Image + Segmentation", display);
+        ClickData clickData{ClickMode::SEGMENTATION, maskF, display, &float_to_id};
+        cv::setMouseCallback("Image + Segmentation", onMouseClick, &clickData);
         cv::waitKey(0);
+        cv::setMouseCallback("Image + Segmentation", nullptr, nullptr);
         return;
     }
 
@@ -261,7 +343,10 @@ void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewTyp
         }
 
         cv::imshow("Mask (pseudo-color)", color_mask);
+        ClickData clickData{ClickMode::MASK, f, {}, &float_to_id};
+        cv::setMouseCallback("Mask (pseudo-color)", onMouseClick, &clickData);
         cv::waitKey(0);
+        cv::setMouseCallback("Mask (pseudo-color)", nullptr, nullptr);
 
     } else if (type == ImageViewType::DEPTH) {
         cv::Mat f = OpenCVBridge::toFloat1ch(mat);
@@ -276,7 +361,10 @@ void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewTyp
         std::string title = "Depth  [min=" + std::to_string(minVal)
                           + "  max=" + std::to_string(maxVal) + "]";
         cv::imshow(title, colored);
+        ClickData clickData{ClickMode::DEPTH, f, {}, nullptr};
+        cv::setMouseCallback(title, onMouseClick, &clickData);
         cv::waitKey(0);
+        cv::setMouseCallback(title, nullptr, nullptr);
 
     } else {
         // Generic: normalize if needed and display
@@ -286,7 +374,10 @@ void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewTyp
         else
             display = mat;
         cv::imshow("Image", display);
+        ClickData clickData{ClickMode::GENERIC, mat, {}, nullptr};
+        cv::setMouseCallback("Image", onMouseClick, &clickData);
         cv::waitKey(0);
+        cv::setMouseCallback("Image", nullptr, nullptr);
     }
 }
 

@@ -78,12 +78,17 @@ Format conversion happens automatically when input and output extensions differ.
 ### Images → Point Cloud (RGB-D)
 
 ```bash
-# From directories of aligned RGB + depth images
+# From directories of aligned RGB + depth images — merge all frames into one file
 ./build/main images-to-pc <rgb_dir> <depth_dir> <output.pcd|ply> --intrinsics <calib.json> [seg_dir]
 
-# From single files
+# From directories of aligned RGB + depth images — produce one pointcloud per frame
+./build/main images-to-pc <rgb_dir> <depth_dir> <output_dir> <pcd|ply> --intrinsics <calib.json> [seg_dir]
+
+# From single files (single RGB + depth -> single pointcloud)
 ./build/main images-to-pc <rgb.png> <depth.png|exr> <output.pcd|ply> --intrinsics <calib.json> [mask.png|exr]
 ```
+
+When `output` is a directory you must explicitly provide the output format (`pcd` or `ply`) as the next positional argument; the command will write one pointcloud file per RGB–depth pair (named after the RGB filename).
 
 Segmentation masks are optional. When provided, only foreground pixels (mask value ≠ 1.0) are back-projected into the point cloud.
 

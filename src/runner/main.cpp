@@ -211,13 +211,18 @@ static void testVideo(const fs::path& src, const fs::path& dst) {
 }
 
 // images-to-pointcloud: back-project RGB-D pairs into a point cloud
-// Usage (dirs):  main images-to-pc <rgb_dir> <depth_dir> <output.pcd|ply> --intrinsics <calib.json> [seg_dir]
-// Usage (files): main images-to-pc <rgb.png> <depth.png> <output.pcd|ply> --intrinsics <calib.json> [mask.png]
+// Modes:
+//  • Single-file (merge all frames):
+//      main images-to-pc <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply> --intrinsics <calib.json> [seg_dir|mask.png]
+//  • Per-frame (one pointcloud per RGB-D pair):
+//      main images-to-pc <rgb_dir> <depth_dir> <output_dir> <pcd|ply> --intrinsics <calib.json> [seg_dir]
+// Note: when <output_dir> is given you must specify the output format (pcd|ply) as the next positional argument.
 static void testImagesToPointcloud(const std::vector<fs::path>& rgbPaths,
                                     const std::vector<fs::path>& depthPaths,
                                     const fs::path& dst,
                                     const std::string& intrinsicsPath,
-                                    const std::vector<fs::path>& segPaths) {
+                                    const std::vector<fs::path>& segPaths,
+                                    const std::string& outFormat = "") {
     if (rgbPaths.size() != depthPaths.size())
         throw std::runtime_error(
             "RGB/depth count mismatch: " + std::to_string(rgbPaths.size())
@@ -235,16 +240,51 @@ static void testImagesToPointcloud(const std::vector<fs::path>& rgbPaths,
     for (const auto& p : segPaths)
         segs.push_back(ImageFactory::createImage(ImageSourceType::FILE, p.string()));
 
-    // Infer output format from extension
-    std::string ext = dst.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
-    if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
+    // Determine output format (either from explicit outFormat or dst extension)
+    std::string ext;
+    if (!outFormat.empty()) {
+        ext = outFormat;
+    } else {
+        ext = dst.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
+        if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
+    }
+
+    // Validate format when producing per-frame outputs
+    const bool dstLooksLikeDir = fs::is_directory(dst) || dst.extension().empty();
+    if (dstLooksLikeDir && ext.empty())
+        throw std::runtime_error("When writing per-frame pointclouds you must provide an output format (pcd or ply)");
 
     std::cout << "[ImagesToPointcloud] " << rgbs.size() << " RGB-D pair(s), format=" << ext
               << ", intrinsics=" << intrinsicsPath;
     if (!segs.empty()) std::cout << ", " << segs.size() << " seg mask(s)";
     std::cout << "\n";
 
+    if (dstLooksLikeDir) {
+        // Per-frame mode: one pointcloud file per RGB-D pair
+        fs::create_directories(dst);
+        std::string extLower = ext;
+        std::transform(extLower.begin(), extLower.end(), extLower.begin(), ::tolower);
+
+        for (std::size_t i = 0; i < rgbs.size(); ++i) {
+            std::vector<std::shared_ptr<Image>> singleRgb = { rgbs[i] };
+            std::vector<std::shared_ptr<Image>> singleDepth = { depths[i] };
+            std::vector<std::shared_ptr<Image>> singleSeg;
+            if (!segs.empty() && segs.size() == rgbs.size()) singleSeg = { segs[i] };
+
+            auto pc = DataConverter::imagesToPointcloud(singleRgb, singleDepth, ext, intrinsicsPath, singleSeg);
+            DataInfo::printPointsInfo(pc);
+
+            const fs::path outPath = dst / (rgbPaths[i].stem().string() + "." + extLower);
+            pc->saveToFile(outPath.string());
+            if (i == 0 || (i + 1) % 10 == 0)
+                std::cout << "[ImagesToPointcloud] Saved " << outPath << "\n";
+        }
+        std::cout << "[ImagesToPointcloud] Done — saved " << rgbs.size() << " file(s) to " << dst << "\n";
+        return;
+    }
+
+    // Single-file mode: merge all frames into one pointcloud
     auto pc = DataConverter::imagesToPointcloud(rgbs, depths, ext, intrinsicsPath, segs);
     DataInfo::printPointsInfo(pc);
     pc->saveToFile(dst.string());
@@ -390,6 +430,7 @@ int main(int argc, char* argv[]) {
                   << "  " << argv[0] << " images-to-video  <output.mp4|avi|mkv> <fps> <img1> [img2 ...]\n"
                   << "  " << argv[0] << " video-to-images  <input_video> <output_dir>\n"
                   << "  " << argv[0] << " images-to-pc     <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply> --intrinsics <calib.json> [seg_dir|mask.png]\n"
+                  << "  " << argv[0] << " images-to-pc     <rgb_dir> <depth_dir> <output_dir> <pcd|ply> --intrinsics <calib.json> [seg_dir]\n"
                   << "  " << argv[0] << " project-bbox     <meta.json> <image|ply> [output]\n"
                   << "  " << argv[0] << " project-bbox     <base_dir>\n";
         return 1;
@@ -405,19 +446,36 @@ int main(int argc, char* argv[]) {
 
         if (mode == "images-to-pointcloud" || mode == "images-to-pc") {
             if (argc < 7) {
-                std::cerr << "Usage: " << argv[0]
+                std::cerr << "Usage (single-file): " << argv[0]
                           << " images-to-pc <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply>"
                           << " --intrinsics <calib.json> [seg_dir|mask.png]\n";
+                std::cerr << "Usage (per-frame): " << argv[0]
+                          << " images-to-pc <rgb_dir> <depth_dir> <output_dir> <pcd|ply> --intrinsics <calib.json> [seg_dir]\n";
                 return 1;
             }
+
             const fs::path rgbArg   = argv[2];
             const fs::path depthArg = argv[3];
             const fs::path dst      = argv[4];
 
-            // Parse required --intrinsics flag and optional positional seg arg
+            // Optional: user may provide an explicit output format when dst is a directory
+            std::string outputFormat;
+            int argStart = 5;
+            if (argStart < argc) {
+                std::string maybeFmt = argv[argStart];
+                std::string fmtNorm = maybeFmt;
+                if (!fmtNorm.empty() && fmtNorm[0] == '.') fmtNorm = fmtNorm.substr(1);
+                std::transform(fmtNorm.begin(), fmtNorm.end(), fmtNorm.begin(), ::tolower);
+                if (fmtNorm == "pcd" || fmtNorm == "ply") {
+                    outputFormat = fmtNorm;
+                    ++argStart;
+                }
+            }
+
+            // Parse required --intrinsics flag and optional positional seg arg from remaining args
             std::string intrinsicsPath;
             fs::path segArg;
-            for (int i = 5; i < argc; ++i) {
+            for (int i = argStart; i < argc; ++i) {
                 std::string a = argv[i];
                 if (a == "--intrinsics" && i + 1 < argc) {
                     intrinsicsPath = argv[++i];
@@ -437,13 +495,15 @@ int main(int argc, char* argv[]) {
                 if (!segArg.empty() && fs::is_directory(segArg))
                     segPaths = collectImagesFromDir(segArg);
             } else {
-                // Single-file mode
+                // Single-file mode (per-file RGB+depth pair)
                 rgbPaths   = { rgbArg };
                 depthPaths = { depthArg };
                 if (!segArg.empty() && fs::is_regular_file(segArg))
                     segPaths = { segArg };
             }
-            testImagesToPointcloud(rgbPaths, depthPaths, dst, intrinsicsPath, segPaths);
+
+            // Call testImagesToPointcloud, passing explicit output format if provided
+            testImagesToPointcloud(rgbPaths, depthPaths, dst, intrinsicsPath, segPaths, outputFormat);
             return 0;
         }
 
