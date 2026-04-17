@@ -12,7 +12,8 @@ class DataVisualize {
 public:
     //Image
     static void displayImage(const std::shared_ptr<Image>& img, ImageViewType type = ImageViewType::GENERIC,
-                             const std::shared_ptr<Image>& mask = nullptr);
+                             const std::shared_ptr<Image>& mask = nullptr,
+                             bool denormMask = false);
 
     //Pointcloud
     static void displayPointcloud(const std::shared_ptr<Pointcloud>& pc,

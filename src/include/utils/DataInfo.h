@@ -11,7 +11,7 @@
 class DataInfo {
 public:
     //Image
-    static void printImageInfo(const std::shared_ptr<Image>& img, ImageViewType type = ImageViewType::GENERIC);
+    static void printImageInfo(const std::shared_ptr<Image>& img, ImageViewType type = ImageViewType::GENERIC, bool denormMask = false);
     
     //Video
     static void printVideoInfo(const std::shared_ptr<Video>& video);

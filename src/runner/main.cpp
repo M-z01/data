@@ -29,13 +29,13 @@ static ImageViewType inferViewType(const fs::path& src) {
 }
 
 static void testImage(const fs::path& src, const fs::path& dst,
-                      const fs::path& maskPath = {}) {
+                      const fs::path& maskPath = {}, bool denormMask = false) {
     std::cout << "[Image] Loading: " << src << "\n";
     auto img = ImageFactory::createImage(ImageSourceType::FILE, src.string());
     img->load();
 
     const ImageViewType viewType = inferViewType(src);
-    DataInfo::printImageInfo(img, viewType);
+    DataInfo::printImageInfo(img, viewType, denormMask);
 
     std::shared_ptr<Image> maskImg;
     if (!maskPath.empty()) {
@@ -43,7 +43,7 @@ static void testImage(const fs::path& src, const fs::path& dst,
         maskImg = ImageFactory::createImage(ImageSourceType::FILE, maskPath.string());
         maskImg->load();
     }
-    DataVisualize::displayImage(img, viewType, maskImg);
+    DataVisualize::displayImage(img, viewType, maskImg, denormMask);
 
     if (!dst.empty()) {
         const std::string srcFmt = FormatDetector::imageFormat(src.string());
@@ -423,7 +423,7 @@ static void testProjectBBox(int argc, char* argv[]) {
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage:\n"
-                  << "  " << argv[0] << " <input_path> [output_path] [--mask <seg.png>] [--rgb <rgb.png>] [--depth <depth.png>]\n"
+                  << "  " << argv[0] << " <input_path> [output_path] [--mask <seg.png>] [--denorm-mask] [--rgb <rgb.png>] [--depth <depth.png>]\n"
                   << "      Supported types: jpg, jpeg, png, exr, txt, csv, json, mp4, avi, mkv, pcd, ply\n"
                   << "      --mask: overlay segmentation on image, or filter pointcloud with --rgb and --depth\n"
                   << "  " << argv[0] << " images-to-video  <input_dir> <output.mp4|avi|mkv> [fps=30]\n"
@@ -559,8 +559,9 @@ int main(int argc, char* argv[]) {
         }
 
         // --- original single-file mode ---
-        // Scan for --mask, --rgb, --depth flags
+        // Scan for --mask, --rgb, --depth, --denorm-mask flags
         fs::path maskPath, rgbPath, depthPath, src, dst;
+        bool denormMask = false;
         std::vector<std::string> positionalArgs;
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
@@ -570,6 +571,8 @@ int main(int argc, char* argv[]) {
                 rgbPath = argv[++i];
             } else if (arg == "--depth" && i + 1 < argc) {
                 depthPath = argv[++i];
+            } else if (arg == "--denorm-mask") {
+                denormMask = true;
             } else {
                 positionalArgs.push_back(arg);
             }
@@ -588,7 +591,7 @@ int main(int argc, char* argv[]) {
 
         const std::string type = FormatDetector::detectType(src.string());
         if (type == "image") {
-            testImage(src, dst, maskPath);
+            testImage(src, dst, maskPath, denormMask);
         } else if (type == "text") {
             testText(src, dst);
         } else if (type == "video") {

@@ -235,7 +235,7 @@ static void onMouseClick(int event, int x, int y, int /*flags*/, void* userdata)
 
 //Image
 void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewType type,
-                                  const std::shared_ptr<Image>& mask) {
+                                  const std::shared_ptr<Image>& mask, bool denormMask) {
     const ImageBuffer& buf = img->getImage();
     cv::Mat mat = OpenCVBridge::bufferToMat(buf);
 
@@ -244,13 +244,15 @@ void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewTyp
         if (mask->getImage().empty()) mask->load();
         cv::Mat maskF = OpenCVBridge::toFloat1ch(
             OpenCVBridge::bufferToMat(mask->getImage()));
+        if (denormMask) maskF = OpenCVBridge::denormalizeMask(maskF);
         auto float_to_id = OpenCVBridge::buildFloatToId(maskF);
+        const float bgVal = denormMask ? 255.0f : 1.0f;
 
-        // Build colour map for each segment (background 1.0 → transparent)
+        // Build colour map for each segment (background → transparent)
         cv::RNG rng(42);
         std::map<float, cv::Vec3b> float_to_color;
         for (const auto& [val, uid] : float_to_id) {
-            if (val == 1.0f) continue; // skip background
+            if (val == bgVal) continue; // skip background
             float_to_color[val] = cv::Vec3b(rng.uniform(0, 255),
                                              rng.uniform(0, 255),
                                              rng.uniform(0, 255));
@@ -281,14 +283,16 @@ void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewTyp
 
         // Draw UID labels at centroids
         for (const auto& [val, uid] : float_to_id) {
-            if (val == 1.0f) continue;
+            if (val == bgVal) continue;
             cv::Mat bin;
             cv::compare(maskF, val, bin, cv::CMP_EQ);
             cv::Moments m = cv::moments(bin, true);
             if (m.m00 > 0) {
                 int cx = static_cast<int>(m.m10 / m.m00);
                 int cy = static_cast<int>(m.m01 / m.m00);
-                cv::putText(display, std::to_string(uid),
+                std::string label = denormMask ? std::to_string(static_cast<int>(val))
+                                               : std::to_string(uid);
+                cv::putText(display, label,
                             cv::Point(cx, cy),
                             cv::FONT_HERSHEY_SIMPLEX, 0.5,
                             cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
@@ -305,13 +309,15 @@ void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewTyp
 
     if (type == ImageViewType::MASK) {
         cv::Mat f = OpenCVBridge::toFloat1ch(mat);
+        if (denormMask) f = OpenCVBridge::denormalizeMask(f);
         auto float_to_id = OpenCVBridge::buildFloatToId(f);
+        const float bgVal = denormMask ? 255.0f : 1.0f;
 
         // Build direct float→color map so we only need one pass over the image.
         cv::RNG rng(42);
         std::map<float, cv::Vec3b> float_to_color;
         for (const auto& [val, uid] : float_to_id) {
-            float_to_color[val] = (val == 1.0f)
+            float_to_color[val] = (val == bgVal)
                 ? cv::Vec3b(75, 75, 75)
                 : cv::Vec3b(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
         }
@@ -328,14 +334,16 @@ void DataVisualize::displayImage(const std::shared_ptr<Image>& img, ImageViewTyp
         // Overlay UID label at centroid of each object (skip background).
         // cv::compare + cv::moments are already vectorised internally.
         for (const auto& [val, uid] : float_to_id) {
-            if (val == 1.0f) continue;
+            if (val == bgVal) continue;
             cv::Mat bin;
             cv::compare(f, val, bin, cv::CMP_EQ);
             cv::Moments m = cv::moments(bin, true);
             if (m.m00 > 0) {
                 int cx = static_cast<int>(m.m10 / m.m00);
                 int cy = static_cast<int>(m.m01 / m.m00);
-                cv::putText(color_mask, std::to_string(uid),
+                std::string label = denormMask ? std::to_string(static_cast<int>(val))
+                                               : std::to_string(uid);
+                cv::putText(color_mask, label,
                             cv::Point(cx, cy),
                             cv::FONT_HERSHEY_SIMPLEX, 0.5,
                             cv::Scalar(255, 255, 255), 1, cv::LINE_AA);

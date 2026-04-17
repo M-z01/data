@@ -3,7 +3,7 @@
 #include <iostream>
 
 //Image
-void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType type) {
+void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType type, bool denormMask) {
     const ImageBuffer& buf = img->getImage();
     std::cout << "=== Image Info ===\n";
     std::cout << "  Format    : " << toString(img->getFormat()) << "\n";
@@ -17,15 +17,19 @@ void DataInfo::printImageInfo(const std::shared_ptr<Image>& img, ImageViewType t
 
     if (type == ImageViewType::MASK) {
         cv::Mat f = OpenCVBridge::toFloat1ch(mat);
+        if (denormMask) f = OpenCVBridge::denormalizeMask(f);
         auto float_to_id = OpenCVBridge::buildFloatToId(f);
 
         // Count pixels per ID
         std::map<int, int> counts;
         for (float v : cv::Mat_<float>(f)) counts[float_to_id[v]]++;
 
-        std::cout << "  Unique mask values and pixel counts:\n";
+        std::cout << "  Unique mask values and pixel counts:";
+        if (denormMask) std::cout << " (denormalized x255)";
+        std::cout << "\n";
         for (const auto& [val, uid] : float_to_id)
-            std::cout << "    ID " << uid << " (value=" << val
+            std::cout << "    ID " << (denormMask ? static_cast<int>(val) : uid)
+                      << " (value=" << val
                       << "): " << counts[uid] << " pixels\n";
 
     } else if (type == ImageViewType::DEPTH) {

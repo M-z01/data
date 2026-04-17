@@ -54,6 +54,16 @@ inline cv::Mat toFloat1ch(const cv::Mat& src) {
     return f;
 }
 
+// Multiply each pixel by 255 and round to nearest integer (for denormalizing
+// masks that were stored in [0, 1] instead of [0, 255]).
+inline cv::Mat denormalizeMask(const cv::Mat& f1ch) {
+    cv::Mat out;
+    f1ch.convertTo(out, CV_32F, 255.0);
+    for (float& v : cv::Mat_<float>(out))
+        v = std::round(v);
+    return out;
+}
+
 // Builds a map from unique float value -> sequential integer ID (0 = first).
 inline std::map<float, int> buildFloatToId(const cv::Mat& f1ch) {
     std::set<float> uniq(f1ch.begin<float>(), f1ch.end<float>());
