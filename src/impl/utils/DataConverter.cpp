@@ -664,7 +664,59 @@ std::shared_ptr<Pointcloud> DataConverter::imagesToPointcloud(
     std::vector<float>   allPoints;
     std::vector<uint8_t> allColors;
 
-    // Intrinsics parsed once on the first iteration
+    // Intrinsics: either a single JSON file (reused for every frame) or a
+    // directory of per-frame JSON files (one per RGB-D pair, sorted).
+    namespace fs = std::filesystem;
+    std::vector<std::string> intrinsicFiles;
+    const bool perFrameIntrinsics = fs::is_directory(intrinsicsPath);
+    if (perFrameIntrinsics) {
+        for (const auto& entry : fs::directory_iterator(intrinsicsPath)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".json")
+                intrinsicFiles.push_back(entry.path().string());
+        }
+        std::sort(intrinsicFiles.begin(), intrinsicFiles.end());
+        if (intrinsicFiles.empty())
+            throw std::runtime_error(
+                "imagesToPointcloud: no .json files found in intrinsics directory: "
+                + intrinsicsPath);
+        if (intrinsicFiles.size() != rgbs.size())
+            throw std::runtime_error(
+                "imagesToPointcloud: intrinsics file count (" +
+                std::to_string(intrinsicFiles.size()) +
+                ") does not match frame count (" +
+                std::to_string(rgbs.size()) + ")");
+    }
+
+    // Helper lambda: parse fx/fy/cx/cy from a JSON object (supports all three layouts)
+    auto parseIntrinsicsJson = [](nlohmann::json j, float& fx, float& fy, float& cx, float& cy) {
+        // Unwrap optional "color" wrapper
+        if (j.contains("color") && j["color"].is_object())
+            j = j["color"];
+
+        if (j.contains("fx") && j.contains("fy") &&
+            j.contains("cx") && j.contains("cy")) {
+            fx = j["fx"].get<float>();
+            fy = j["fy"].get<float>();
+            cx = j["cx"].get<float>();
+            cy = j["cy"].get<float>();
+        } else {
+            const char* matKey = j.contains("K") ? "K"
+                               : j.contains("intrinsic_matrix") ? "intrinsic_matrix"
+                               : nullptr;
+            if (!matKey)
+                throw std::runtime_error(
+                    "imagesToPointcloud: intrinsics JSON must contain "
+                    "{fx,fy,cx,cy} or a \"K\"/\"intrinsic_matrix\" array");
+            auto arr = j[matKey].get<std::vector<float>>();
+            if (arr.size() < 9)
+                throw std::runtime_error(
+                    "imagesToPointcloud: intrinsic matrix must have >= 9 elements");
+            fx = arr[0]; fy = arr[4];
+            cx = arr[2]; cy = arr[5];
+        }
+    };
+
+    // Shared intrinsics (single-file mode — populated on first iteration)
     float camFx = 0, camFy = 0, camCx = 0, camCy = 0;
 
     for (std::size_t i = 0; i < rgbs.size(); ++i) {
@@ -716,46 +768,17 @@ std::shared_ptr<Pointcloud> DataConverter::imagesToPointcloud(
         const int h = rgb.rows;
 
         // Camera intrinsics – loaded from the required JSON file.
-        // Parse once on the first iteration (values are reused for all frames).
-        // We declare them outside the if-guard so they persist across iterations.
-        if (i == 0) {
-            std::ifstream ifs(intrinsicsPath);
+        // In single-file mode: parse once on i==0, reuse all frames.
+        // In per-frame mode: parse the matching file for each frame.
+        if (i == 0 || perFrameIntrinsics) {
+            const std::string& path = perFrameIntrinsics ? intrinsicFiles[i] : intrinsicsPath;
+            std::ifstream ifs(path);
             if (!ifs.is_open())
                 throw std::runtime_error(
-                    "imagesToPointcloud: cannot open intrinsics file: " + intrinsicsPath);
+                    "imagesToPointcloud: cannot open intrinsics file: " + path);
             nlohmann::json j;
             ifs >> j;
-
-            // If the file wraps intrinsics under a "color" key, unwrap it.
-            if (j.contains("color") && j["color"].is_object())
-                j = j["color"];
-
-            // Support three layouts:
-            //  1) flat keys: { "fx": ..., "fy": ..., "cx": ..., "cy": ... }
-            //  2) nested under "color": { "color": { "fx": ... } }   (unwrapped above)
-            //  3) 3×3 row-major matrix under "K" or "intrinsic_matrix":
-            //     [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-            if (j.contains("fx") && j.contains("fy") &&
-                j.contains("cx") && j.contains("cy")) {
-                camFx = j["fx"].get<float>();
-                camFy = j["fy"].get<float>();
-                camCx = j["cx"].get<float>();
-                camCy = j["cy"].get<float>();
-            } else {
-                const char* matKey = j.contains("K") ? "K"
-                                   : j.contains("intrinsic_matrix") ? "intrinsic_matrix"
-                                   : nullptr;
-                if (!matKey)
-                    throw std::runtime_error(
-                        "imagesToPointcloud: intrinsics JSON must contain "
-                        "{fx,fy,cx,cy} or a \"K\"/\"intrinsic_matrix\" array");
-                auto arr = j[matKey].get<std::vector<float>>();
-                if (arr.size() < 9)
-                    throw std::runtime_error(
-                        "imagesToPointcloud: intrinsic matrix must have ≥ 9 elements");
-                camFx = arr[0]; camFy = arr[4];
-                camCx = arr[2]; camCy = arr[5];
-            }
+            parseIntrinsicsJson(std::move(j), camFx, camFy, camCx, camCy);
         }
         const float fx = camFx;
         const float fy = camFy;

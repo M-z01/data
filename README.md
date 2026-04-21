@@ -82,7 +82,7 @@ Format conversion happens automatically when input and output extensions differ.
 ./build/main images-to-pc <rgb_dir> <depth_dir> <output.pcd|ply> --intrinsics <calib.json> [seg_dir]
 
 # From directories of aligned RGB + depth images — produce one pointcloud per frame
-./build/main images-to-pc <rgb_dir> <depth_dir> <output_dir> <pcd|ply> --intrinsics <calib.json> [seg_dir]
+./build/main images-to-pc <rgb_dir> <depth_dir> <output_dir> <pcd|ply> --intrinsics <calib.json|calib_dir> [seg_dir]
 
 # From single files (single RGB + depth -> single pointcloud)
 ./build/main images-to-pc <rgb.png> <depth.png|exr> <output.pcd|ply> --intrinsics <calib.json> [mask.png|exr]
@@ -92,10 +92,10 @@ When `output` is a directory you must explicitly provide the output format (`pcd
 
 Segmentation masks are optional. When provided, only foreground pixels (mask value ≠ 1.0) are back-projected into the point cloud.
 
-Camera intrinsics are required via `--intrinsics <calib.json>`. The JSON file supports these layouts:
+Camera intrinsics are required via `--intrinsics <calib.json|calib_dir>`. A **single JSON file** applies the same intrinsics to every frame; a **directory of JSON files** (sorted, one per RGB–depth pair) applies per-frame intrinsics. Extra fields such as `rgb_file` and `frame_idx` are ignored. The JSON file supports these layouts:
 
 ```jsonc
-// Flat keys
+// Flat keys (extra fields like rgb_file / frame_idx are ignored)
 { "fx": 525.0, "fy": 525.0, "cx": 319.5, "cy": 239.5 }
 
 // Nested under "color"

@@ -266,13 +266,32 @@ static void testImagesToPointcloud(const std::vector<fs::path>& rgbPaths,
         std::string extLower = ext;
         std::transform(extLower.begin(), extLower.end(), extLower.begin(), ::tolower);
 
+        // If --intrinsics is a directory, collect and sort its JSON files once
+        // so each single-frame call receives the matching per-frame file.
+        std::vector<std::string> intrinsicFiles;
+        if (fs::is_directory(intrinsicsPath)) {
+            for (const auto& entry : fs::directory_iterator(intrinsicsPath)) {
+                if (entry.is_regular_file() && entry.path().extension() == ".json")
+                    intrinsicFiles.push_back(entry.path().string());
+            }
+            std::sort(intrinsicFiles.begin(), intrinsicFiles.end());
+            if (intrinsicFiles.size() != rgbs.size())
+                throw std::runtime_error(
+                    "ImagesToPointcloud: intrinsics file count (" +
+                    std::to_string(intrinsicFiles.size()) +
+                    ") does not match frame count (" +
+                    std::to_string(rgbs.size()) + ")");
+        }
+
         for (std::size_t i = 0; i < rgbs.size(); ++i) {
             std::vector<std::shared_ptr<Image>> singleRgb = { rgbs[i] };
             std::vector<std::shared_ptr<Image>> singleDepth = { depths[i] };
             std::vector<std::shared_ptr<Image>> singleSeg;
             if (!segs.empty() && segs.size() == rgbs.size()) singleSeg = { segs[i] };
 
-            auto pc = DataConverter::imagesToPointcloud(singleRgb, singleDepth, ext, intrinsicsPath, singleSeg);
+            const std::string& frameIntrinsics =
+                intrinsicFiles.empty() ? intrinsicsPath : intrinsicFiles[i];
+            auto pc = DataConverter::imagesToPointcloud(singleRgb, singleDepth, ext, frameIntrinsics, singleSeg);
             DataInfo::printPointsInfo(pc);
 
             const fs::path outPath = dst / (rgbPaths[i].stem().string() + "." + extLower);
@@ -429,8 +448,8 @@ int main(int argc, char* argv[]) {
                   << "  " << argv[0] << " images-to-video  <input_dir> <output.mp4|avi|mkv> [fps=30]\n"
                   << "  " << argv[0] << " images-to-video  <output.mp4|avi|mkv> <fps> <img1> [img2 ...]\n"
                   << "  " << argv[0] << " video-to-images  <input_video> <output_dir>\n"
-                  << "  " << argv[0] << " images-to-pc     <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply> --intrinsics <calib.json> [seg_dir|mask.png]\n"
-                  << "  " << argv[0] << " images-to-pc     <rgb_dir> <depth_dir> <output_dir> <pcd|ply> --intrinsics <calib.json> [seg_dir]\n"
+                  << "  " << argv[0] << " images-to-pc     <rgb_dir|rgb.png> <depth_dir|depth.png> <output.pcd|ply> --intrinsics <calib.json|calib_dir> [seg_dir|mask.png]\n"
+                  << "  " << argv[0] << " images-to-pc     <rgb_dir> <depth_dir> <output_dir> <pcd|ply> --intrinsics <calib.json|calib_dir> [seg_dir]\n"
                   << "  " << argv[0] << " project-bbox     <meta.json> <image|ply> [output]\n"
                   << "  " << argv[0] << " project-bbox     <base_dir>\n";
         return 1;
